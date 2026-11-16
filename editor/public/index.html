@@ -2,68 +2,207 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Site Editor — caroline chou</title>
+<title>Website Editor — caroline chou</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="/__editor__/editor-shell.css">
+<script src="/__editor__/theme.js"></script>
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <h1>Site Editor</h1>
-        <p>Drag photos, upload images, edit text — then Save.</p>
-      </div>
-      <nav id="page-list" class="page-list"></nav>
-      <div class="sidebar-footer">
-        <button id="new-page-btn" class="btn btn-ghost btn-block">+ New Page</button>
-        <button id="edit-menu-btn" class="btn btn-ghost btn-block">Edit Menu</button>
-        <a href="/index.html" target="_blank">View live site &rarr;</a>
-      </div>
-    </aside>
-    <main class="workspace">
-      <div class="insert-toolbar">
-        <span class="insert-toolbar-label">Insert:</span>
-        <button id="insert-textbox-btn" class="btn btn-ghost" disabled>+ Text</button>
-        <button id="insert-image-btn" class="btn btn-ghost" disabled>+ Image</button>
-        <button id="insert-mailing-btn" class="btn btn-ghost" disabled>+ Mailing List</button>
-      </div>
-      <div class="topbar">
-        <span id="current-page-label">Select a page to edit</span>
-        <div class="topbar-actions">
-          <button id="viewport-desktop-btn" class="btn btn-ghost btn-toggle active" title="Desktop view">Desktop</button>
-          <button id="viewport-phone-btn" class="btn btn-ghost btn-toggle" title="Phone view">Phone</button>
-          <span id="dirty-indicator" class="dirty-indicator"></span>
-          <button id="reload-btn" class="btn btn-ghost" disabled>Discard changes</button>
-          <button id="save-btn" class="btn btn-primary" disabled>Save</button>
-        </div>
-      </div>
-      <div class="canvas">
-        <div id="frame-wrap" class="frame-wrap">
-          <iframe id="page-frame" title="Page preview"></iframe>
-        </div>
-        <div id="empty-state" class="empty-state">
-          <p>Pick a page from the left to start editing.</p>
-        </div>
-      </div>
-    </main>
-  </div>
-
-  <div id="nav-modal" class="modal-overlay" style="display:none">
-    <div class="modal">
-      <h2>Edit Menu</h2>
-      <p class="modal-hint">Edits apply to the header menu on every page. Reorder with the arrows.</p>
-      <div id="nav-items-list" class="nav-items-list"></div>
-      <div class="modal-add-row">
-        <button id="nav-add-link-btn" class="btn btn-ghost">+ Add Link</button>
-        <button id="nav-add-dropdown-btn" class="btn btn-ghost">+ Add Dropdown Menu</button>
-      </div>
-      <div class="modal-actions">
-        <button id="nav-cancel-btn" class="btn btn-ghost">Cancel</button>
-        <button id="nav-save-btn" class="btn btn-primary">Save Menu</button>
+<div class="app">
+  <!-- ============================ left: pages -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">cc</div>
+      <div class="brand-text">
+        <div class="brand-name">caroline chou</div>
+        <a class="brand-url" href="https://carochou.com" target="_blank" rel="noopener">carochou.com ↗</a>
       </div>
     </div>
-  </div>
+    <div class="sidebar-search">
+      <input id="page-search" type="search" placeholder="Search pages" autocomplete="off">
+    </div>
+    <nav id="page-tree" class="page-tree" aria-label="Pages"></nav>
+    <div class="sidebar-actions">
+      <button id="new-page-btn" class="side-btn"><span class="side-btn-icon">+</span> Add page</button>
+      <button id="edit-menu-btn" class="side-btn"><span class="side-btn-icon">☰</span> Edit menu</button>
+    </div>
+  </aside>
 
-  <script src="/__editor__/editor-shell.js"></script>
+  <!-- ============================ center: page -->
+  <main class="workspace">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div id="page-title" class="page-title">Pick a page</div>
+        <div id="save-status" class="save-status"></div>
+      </div>
+      <div class="segmented" role="group" aria-label="Preview size">
+        <button id="viewport-desktop-btn" class="seg active" title="Desktop view">
+          <svg width="16" height="16" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.5 14h5M8 11.5V14" stroke="currentColor" stroke-width="1.3"/></svg>
+        </button>
+        <button id="viewport-phone-btn" class="seg" title="Phone view">
+          <svg width="16" height="16" viewBox="0 0 16 16"><rect x="4.5" y="1.5" width="7" height="13" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M7 12.5h2" stroke="currentColor" stroke-width="1.3"/></svg>
+        </button>
+      </div>
+      <div class="topbar-right">
+        <button id="undo-btn" class="icon-btn" title="Undo (⌘Z)" disabled>
+          <svg width="16" height="16" viewBox="0 0 16 16"><path d="M5.5 3.5 2.5 6.5l3 3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 6.5h6.5a4 4 0 0 1 0 8H7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        </button>
+        <button id="redo-btn" class="icon-btn" title="Redo (⇧⌘Z)" disabled>
+          <svg width="16" height="16" viewBox="0 0 16 16"><path d="m10.5 3.5 3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M13 6.5H6.5a4 4 0 0 0 0 8H9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        </button>
+        <span class="topbar-sep"></span>
+        <button id="discard-btn" class="btn btn-quiet" disabled>Discard</button>
+        <button id="save-btn" class="btn btn-secondary" disabled>Save</button>
+        <button id="styles-btn" class="btn btn-secondary" title="Site-wide fonts and colors">
+          <svg width="14" height="14" viewBox="0 0 16 16"><path d="M3 13 9.5 3h1L14 13M5.3 9.5h6.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M1 13h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          Styles
+        </button>
+        <button id="publish-btn" class="btn btn-primary">Publish <span id="publish-count" class="count" hidden></span></button>
+      </div>
+    </header>
+
+    <div id="draft-banner" class="banner" hidden>
+      <span id="draft-banner-text">You have unsaved changes on this page from earlier.</span>
+      <div class="banner-actions">
+        <button id="draft-restore-btn" class="btn btn-primary btn-sm">Restore them</button>
+        <button id="draft-dismiss-btn" class="btn btn-quiet btn-sm">Throw them away</button>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div id="frame-wrap" class="frame-wrap">
+        <iframe id="page-frame" title="Page preview"></iframe>
+      </div>
+      <div id="empty-state" class="empty-state">
+        <div class="empty-card">
+          <div class="empty-title">Pick a page to edit</div>
+          <p>Click any text to type. Hover over a photo to replace, crop or move it. Changes save as drafts automatically, so you can switch pages without losing anything.</p>
+        </div>
+      </div>
+      <div id="add-block" class="add-block" hidden>
+        <div id="add-block-menu" class="add-block-menu" hidden>
+          <button data-tool="addTextBox"><span class="ab-icon">T</span><span><b>Text</b><small>A new paragraph</small></span></button>
+          <button data-tool="addImage"><span class="ab-icon">▣</span><span><b>Image</b><small>Upload a photo</small></span></button>
+          <button data-tool="addMailingList"><span class="ab-icon">✉</span><span><b>Signup form</b><small>Mailing list box</small></span></button>
+        </div>
+        <button id="add-block-btn" class="add-block-btn">+ Add block</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- ============================ right: site styles -->
+  <aside id="styles-panel" class="styles-panel" aria-hidden="true">
+    <div class="panel-header">
+      <h2>Site styles</h2>
+      <button id="styles-close-btn" class="icon-btn" title="Close">✕</button>
+    </div>
+    <p class="panel-hint">Fonts and colors for every page. To style one bit of text, select it on the page instead.</p>
+    <div class="panel-body">
+      <div class="field">
+        <label for="st-heading-font">Heading font</label>
+        <select id="st-heading-font" class="font-select"></select>
+      </div>
+      <div class="field">
+        <label for="st-heading-weight">Heading weight</label>
+        <select id="st-heading-weight">
+          <option value="300">Light</option>
+          <option value="400">Regular</option>
+          <option value="500">Medium</option>
+          <option value="600">Semibold</option>
+          <option value="700">Bold</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="st-body-font">Body font</label>
+        <select id="st-body-font" class="font-select"></select>
+      </div>
+      <div class="field">
+        <label for="st-base-size">Text size <span id="st-base-size-val" class="field-val"></span></label>
+        <input id="st-base-size" type="range" min="13" max="20" step="1">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="st-text-color">Text color</label>
+          <div class="color-field"><input id="st-text-color" type="color"><span id="st-text-color-val"></span></div>
+        </div>
+        <div class="field">
+          <label for="st-bg-color">Background</label>
+          <div class="color-field"><input id="st-bg-color" type="color"><span id="st-bg-color-val"></span></div>
+        </div>
+      </div>
+      <div id="font-sample" class="font-sample">
+        <div class="font-sample-h">Fungi, insects &amp; art</div>
+        <div class="font-sample-p">How living systems communicate, made visible through sculpture, film and community work.</div>
+      </div>
+      <button id="st-reset-btn" class="link-btn">Reset to original look</button>
+    </div>
+    <div class="panel-footer">
+      <button id="st-cancel-btn" class="btn btn-quiet">Cancel</button>
+      <button id="st-apply-btn" class="btn btn-primary" disabled>Apply to all pages</button>
+    </div>
+  </aside>
+</div>
+
+<!-- ============================ modals -->
+<div id="nav-modal" class="modal-overlay" hidden>
+  <div class="modal modal-wide">
+    <h2>Edit menu</h2>
+    <p class="modal-hint">The menu at the top of every page. Reorder with the arrows.</p>
+    <div id="nav-items-list" class="nav-items-list"></div>
+    <div class="modal-add-row">
+      <button id="nav-add-link-btn" class="btn btn-secondary btn-sm">+ Link</button>
+      <button id="nav-add-dropdown-btn" class="btn btn-secondary btn-sm">+ Dropdown menu</button>
+    </div>
+    <div class="modal-actions">
+      <button id="nav-cancel-btn" class="btn btn-quiet">Cancel</button>
+      <button id="nav-save-btn" class="btn btn-primary">Save menu</button>
+    </div>
+  </div>
+</div>
+
+<div id="newpage-modal" class="modal-overlay" hidden>
+  <div class="modal">
+    <h2>Add a page</h2>
+    <div class="field">
+      <label for="np-name">Page name</label>
+      <input id="np-name" type="text" placeholder="e.g. Spore Prints">
+    </div>
+    <div class="field">
+      <label>Start with</label>
+      <label class="radio"><input type="radio" name="np-start" value="blank" checked> A blank page</label>
+      <label class="radio" id="np-copy-row"><input type="radio" name="np-start" value="copy"> A copy of <b id="np-copy-name"></b></label>
+    </div>
+    <label class="checkbox"><input id="np-menu" type="checkbox" checked> Add it to the Selected Works menu</label>
+    <div class="modal-actions">
+      <button id="np-cancel-btn" class="btn btn-quiet">Cancel</button>
+      <button id="np-create-btn" class="btn btn-primary">Create page</button>
+    </div>
+  </div>
+</div>
+
+<div id="publish-modal" class="modal-overlay" hidden>
+  <div class="modal">
+    <h2 id="pub-title">Publish to carochou.com</h2>
+    <div id="pub-body">
+      <p id="pub-dirty-note" class="note" hidden>This page has edits that aren't saved yet. They'll be saved first.</p>
+      <p id="pub-drafts-note" class="note" hidden></p>
+      <p class="modal-hint" id="pub-summary"></p>
+      <ul id="pub-files" class="pub-files"></ul>
+      <div class="field">
+        <label for="pub-message">Note for yourself <span class="field-val">optional</span></label>
+        <input id="pub-message" type="text" placeholder="e.g. Added spore print photos">
+      </div>
+    </div>
+    <div id="pub-result" class="pub-result" hidden></div>
+    <div class="modal-actions">
+      <button id="pub-cancel-btn" class="btn btn-quiet">Cancel</button>
+      <button id="pub-go-btn" class="btn btn-primary">Publish now</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="/__editor__/editor-shell.js"></script>
 </body>
 </html>

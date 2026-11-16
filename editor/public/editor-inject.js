@@ -721,149 +721,304 @@
     });
   }
 
-  // ---------------------------------------------------------------- text style panel
-  // Font size + background color for whatever text element currently has
-  // focus. Shows for any editable text (paragraph, heading, promoted free
-  // text box) -- not just a special "free text box" type.
-  function setupTextStylePanel() {
-    var panel = document.createElement("div");
-    panel.className = "editor-textstyle-panel editor-ui";
-    panel.style.display = "none";
-    var activeEl = null;
+  // ---------------------------------------------------------------- text toolbar
+  // One floating toolbar for any text being edited: paragraph style, font,
+  // size, bold/italic/underline/strike, color, highlight, alignment, links,
+  // clear formatting. With text selected it styles just the selection; with
+  // only a blinking cursor, font/size/alignment apply to the whole paragraph.
+  function setupTextToolbar() {
+    var Theme = window.parent && window.parent.SiteTheme;
+    var fonts = Theme ? Theme.FONTS : [{ name: "System (default)", css: "" }];
 
-    function group(label, controls) {
-      var g = document.createElement("div");
-      g.className = "editor-textstyle-group";
-      var l = document.createElement("span");
-      l.textContent = label;
-      g.appendChild(l);
-      controls.forEach(function (c) { g.appendChild(c); });
-      return g;
+    // load every curated font in the editor so the menu can preview them
+    // (editor-only: stripped on save; the live site loads only fonts in use)
+    if (Theme) {
+      var fontLink = document.createElement("link");
+      fontLink.rel = "stylesheet";
+      fontLink.className = "editor-ui";
+      fontLink.href = Theme.googleUrl(fonts.map(function (f) { return f.name; }));
+      document.head.appendChild(fontLink);
     }
 
-    var sizeSelect = document.createElement("select");
-    [12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64].forEach(function (sz) {
-      var opt = document.createElement("option");
-      opt.value = String(sz);
-      opt.textContent = sz + "px";
-      sizeSelect.appendChild(opt);
+    var bar = document.createElement("div");
+    bar.className = "editor-text-toolbar editor-ui";
+    document.body.appendChild(bar);
+
+    var savedRange = null;
+    var activeRoot = null;
+
+    function editableFrom(node) {
+      var el = node && node.nodeType === 3 ? node.parentElement : node;
+      return el && el.closest ? el.closest('[contenteditable="true"]') : null;
+    }
+    function rememberSelection() {
+      var sel = document.getSelection();
+      if (!sel || !sel.rangeCount) return;
+      var root = editableFrom(sel.anchorNode);
+      if (!root) return;
+      savedRange = sel.getRangeAt(0).cloneRange();
+      activeRoot = root;
+    }
+    function restoreSelection() {
+      if (!savedRange) return;
+      var sel = document.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(savedRange);
+    }
+    function hasSelection() { return savedRange && !savedRange.collapsed; }
+    var BLOCK_TAGS = ["P", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "BLOCKQUOTE", "FIGCAPTION", "DIV"];
+    function currentBlock() {
+      if (!activeRoot) return null;
+      var n = savedRange ? savedRange.startContainer : activeRoot;
+      var el = n.nodeType === 3 ? n.parentElement : n;
+      while (el && el !== activeRoot) {
+        if (BLOCK_TAGS.indexOf(el.tagName) !== -1) return el;
+        el = el.parentElement;
+      }
+      return activeRoot;
+    }
+    function isFlow() { return activeRoot && activeRoot.classList.contains("editor-text-flow"); }
+    function changed() { markDirty(); rememberSelection(); sync(); position(); }
+
+    function exec(cmd, val, css) {
+      restoreSelection();
+      document.execCommand("styleWithCSS", false, !!css);
+      document.execCommand(cmd, false, val == null ? null : val);
+      changed();
+    }
+
+    // ---- controls
+    function select(title, options, onChange) {
+      var s = document.createElement("select");
+      s.title = title;
+      options.forEach(function (o) {
+        var opt = document.createElement("option");
+        opt.value = o.value;
+        opt.textContent = o.label;
+        if (o.font) opt.style.fontFamily = o.font;
+        s.appendChild(opt);
+      });
+      s.addEventListener("mousedown", rememberSelection);
+      s.addEventListener("change", function () { onChange(s.value); });
+      bar.appendChild(s);
+      return s;
+    }
+    function button(html, title, onClick) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "editor-tt-btn";
+      b.innerHTML = html;
+      b.title = title;
+      b.addEventListener("mousedown", function (e) { e.preventDefault(); });
+      b.addEventListener("click", function (e) { e.preventDefault(); onClick(); });
+      bar.appendChild(b);
+      return b;
+    }
+    function divider() {
+      var d = document.createElement("span");
+      d.className = "editor-tt-divider";
+      bar.appendChild(d);
+    }
+    function colorInput(title, swatchLabel, onPick) {
+      var wrap = document.createElement("label");
+      wrap.className = "editor-tt-color";
+      wrap.title = title;
+      var face = document.createElement("span");
+      face.innerHTML = swatchLabel;
+      var bar2 = document.createElement("span");
+      bar2.className = "editor-tt-color-bar";
+      var input = document.createElement("input");
+      input.type = "color";
+      input.addEventListener("mousedown", rememberSelection);
+      input.addEventListener("input", function () { bar2.style.background = input.value; onPick(input.value); });
+      wrap.appendChild(face);
+      wrap.appendChild(bar2);
+      wrap.appendChild(input);
+      bar.appendChild(wrap);
+      return { input: input, bar: bar2 };
+    }
+
+    var styleSel = select("Paragraph style", [
+      { value: "P", label: "Paragraph" },
+      { value: "H1", label: "Heading 1" },
+      { value: "H2", label: "Heading 2" },
+      { value: "H3", label: "Heading 3" },
+      { value: "BLOCKQUOTE", label: "Quote" },
+    ], function (tag) { exec("formatBlock", "<" + tag + ">"); });
+
+    var fontSel = select("Font", fonts.map(function (f, i) {
+      return { value: String(i), label: i === 0 ? "Site font" : f.name, font: f.css || "" };
+    }), function (idx) {
+      var f = fonts[Number(idx)];
+      if (hasSelection()) {
+        exec("fontName", f.css || "inherit", true);
+      } else {
+        var b = currentBlock();
+        if (b) { b.style.fontFamily = f.css || ""; changed(); }
+      }
     });
-    sizeSelect.addEventListener("change", function () {
-      if (activeEl) { activeEl.style.fontSize = sizeSelect.value + "px"; markDirty(); }
+    fontSel.classList.add("editor-tt-font");
+
+    var SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, 80];
+    var sizeSel = select("Text size", [{ value: "", label: "Size" }].concat(SIZES.map(function (s) {
+      return { value: String(s), label: s + "" };
+    })), function (px) {
+      if (!px) return;
+      if (hasSelection()) {
+        restoreSelection();
+        document.execCommand("styleWithCSS", false, false);
+        document.execCommand("fontSize", false, "7");
+        var root = activeRoot || document.body;
+        root.querySelectorAll('font[size="7"]').forEach(function (fEl) {
+          var span = document.createElement("span");
+          span.style.fontSize = px + "px";
+          while (fEl.firstChild) span.appendChild(fEl.firstChild);
+          fEl.replaceWith(span);
+        });
+        root.querySelectorAll("span").forEach(function (sp) {
+          if (sp.style.fontSize === "xxx-large" || sp.style.fontSize === "-webkit-xxx-large") sp.style.fontSize = px + "px";
+        });
+        changed();
+      } else {
+        var b = currentBlock();
+        if (b) { b.style.fontSize = px + "px"; changed(); }
+      }
+    });
+    sizeSel.classList.add("editor-tt-size");
+
+    divider();
+    var boldBtn = button("<b>B</b>", "Bold (⌘B)", function () { exec("bold"); });
+    var italicBtn = button("<i>I</i>", "Italic (⌘I)", function () { exec("italic"); });
+    var underBtn = button("<u>U</u>", "Underline (⌘U)", function () { exec("underline"); });
+    var strikeBtn = button("<s>S</s>", "Strikethrough", function () { exec("strikeThrough"); });
+    divider();
+    var textColor = colorInput("Text color", "A", function (c) { exec("foreColor", c, true); });
+    colorInput("Highlight", "<span class='editor-tt-hl'>H</span>", function (c) { exec("hiliteColor", c, true); });
+    divider();
+    var ALIGN_ICONS = {
+      left: "<svg width='14' height='14' viewBox='0 0 14 14'><path d='M1 2h12M1 5.3h8M1 8.6h12M1 12h8' stroke='currentColor' stroke-width='1.4'/></svg>",
+      center: "<svg width='14' height='14' viewBox='0 0 14 14'><path d='M1 2h12M3 5.3h8M1 8.6h12M3 12h8' stroke='currentColor' stroke-width='1.4'/></svg>",
+      right: "<svg width='14' height='14' viewBox='0 0 14 14'><path d='M1 2h12M5 5.3h8M1 8.6h12M5 12h8' stroke='currentColor' stroke-width='1.4'/></svg>",
+    };
+    var alignBtns = {};
+    ["left", "center", "right"].forEach(function (a) {
+      alignBtns[a] = button(ALIGN_ICONS[a], "Align " + a, function () {
+        if (isFlow()) {
+          exec("justify" + a.charAt(0).toUpperCase() + a.slice(1));
+        } else if (activeRoot) {
+          activeRoot.style.textAlign = a === "left" ? "" : a;
+          changed();
+        }
+      });
+    });
+    divider();
+    button("Link", "Add or change a link", function () {
+      var range = savedRange ? savedRange.cloneRange() : null;
+      var el = range ? (range.startContainer.nodeType === 3 ? range.startContainer.parentElement : range.startContainer) : null;
+      var linkEl = el && el.closest ? el.closest("a") : null;
+      var existing = linkEl ? (linkEl.getAttribute("href") || "") : "";
+      openLinkPicker(existing, function (href) {
+        savedRange = range;
+        if (href) exec("createLink", href); else exec("unlink");
+      });
+    });
+    button("&#x2715;&#xFE0E;<span class='editor-tt-small'>Clear</span>", "Clear formatting", function () {
+      exec("removeFormat");
+      if (!hasSelection()) {
+        var b = currentBlock();
+        if (b) { b.style.fontFamily = ""; b.style.fontSize = ""; b.style.textAlign = ""; changed(); }
+      }
     });
 
-    var bgInput = document.createElement("input");
-    bgInput.type = "color";
-    bgInput.title = "Background color";
-    bgInput.addEventListener("input", function () {
-      if (activeEl) { activeEl.style.backgroundColor = bgInput.value; markDirty(); }
-    });
-    var bgNoneBtn = makeBtn("None", function () {
-      if (activeEl) { activeEl.style.backgroundColor = "transparent"; markDirty(); }
+    bar.addEventListener("mousedown", function (e) {
+      var t = e.target;
+      if (t.tagName !== "SELECT" && t.tagName !== "INPUT" && t.tagName !== "OPTION") e.preventDefault();
     });
 
-    panel.appendChild(group("Font Size", [sizeSelect]));
-    panel.appendChild(group("Background", [bgInput, bgNoneBtn]));
-    document.body.appendChild(panel);
-
+    // ---- state
     function rgbToHex(rgb) {
       var m = rgb && rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-      if (!m) return null;
+      if (!m) return "#111111";
       return "#" + [m[1], m[2], m[3]].map(function (v) {
         var h = parseInt(v, 10).toString(16);
         return h.length === 1 ? "0" + h : h;
       }).join("");
     }
-
-    function syncFromEl() {
-      if (!activeEl) return;
-      var cs = window.getComputedStyle(activeEl);
-      sizeSelect.value = String(parseInt(cs.fontSize, 10) || 16);
-      bgInput.value = rgbToHex(cs.backgroundColor) || "#ffffff";
-    }
-
-    document.addEventListener("focusin", function (e) {
-      var el = e.target;
-      if (!el.getAttribute || el.getAttribute("contenteditable") !== "true") return;
-      activeEl = el;
-      panel.style.display = "flex";
-      syncFromEl();
-    });
-    document.addEventListener("focusout", function () {
-      setTimeout(function () {
-        var active = document.activeElement;
-        if (active === activeEl || panel.contains(active)) return;
-        panel.style.display = "none";
-        activeEl = null;
-      }, 60);
-    });
-  }
-
-  // ---------------------------------------------------------------- rich text toolbar
-  function setupRichTextToolbar() {
-    var toolbar = document.createElement("div");
-    toolbar.className = "editor-richtext-toolbar editor-ui";
-
-    var boldBtn = makeBtn("B", function () { document.execCommand("bold"); updateStates(); });
-    var underlineBtn = makeBtn("U", function () { document.execCommand("underline"); updateStates(); });
-    var linkBtn = makeBtn("Link", function () {
-      var sel = document.getSelection();
-      var savedRange = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
-      var anchor = sel.anchorNode;
-      var el = anchor && anchor.nodeType === 3 ? anchor.parentElement : anchor;
-      var linkEl = el && el.closest ? el.closest("a") : null;
-      var existing = linkEl ? (linkEl.getAttribute("href") || "") : "";
-      openLinkPicker(existing, function (href) {
-        if (savedRange) {
-          sel.removeAllRanges();
-          sel.addRange(savedRange);
-        }
-        if (href) {
-          document.execCommand("createLink", false, href);
-        } else {
-          document.execCommand("unlink");
-        }
-      });
-    });
-    var unlinkBtn = makeBtn("Unlink", function () { document.execCommand("unlink"); });
-
-    toolbar.appendChild(boldBtn);
-    toolbar.appendChild(underlineBtn);
-    toolbar.appendChild(linkBtn);
-    toolbar.appendChild(unlinkBtn);
-    document.body.appendChild(toolbar);
-
-    toolbar.addEventListener("mousedown", function (e) { e.preventDefault(); });
-
-    function updateStates() {
+    function sync() {
+      if (!activeRoot) return;
+      var anchorEl = savedRange
+        ? (savedRange.startContainer.nodeType === 3 ? savedRange.startContainer.parentElement : savedRange.startContainer)
+        : activeRoot;
+      var cs = window.getComputedStyle(anchorEl);
+      var block = currentBlock();
+      styleSel.disabled = !isFlow();
+      styleSel.value = block && ["P", "H1", "H2", "H3", "BLOCKQUOTE"].indexOf(block.tagName) !== -1 ? block.tagName : "P";
+      var fam = cs.fontFamily || "";
+      var idx = 0;
+      fonts.forEach(function (f, i) { if (i && fam.indexOf(f.name) !== -1) idx = i; });
+      fontSel.value = String(idx);
+      var px = Math.round(parseFloat(cs.fontSize));
+      sizeSel.value = SIZES.indexOf(px) !== -1 ? String(px) : "";
+      sizeSel.options[0].textContent = SIZES.indexOf(px) !== -1 ? "Size" : px + "";
       boldBtn.classList.toggle("active", document.queryCommandState("bold"));
-      underlineBtn.classList.toggle("active", document.queryCommandState("underline"));
+      italicBtn.classList.toggle("active", document.queryCommandState("italic"));
+      underBtn.classList.toggle("active", document.queryCommandState("underline"));
+      strikeBtn.classList.toggle("active", document.queryCommandState("strikeThrough"));
+      textColor.bar.style.background = rgbToHex(cs.color);
+      var al = window.getComputedStyle(block || activeRoot).textAlign;
+      ["left", "center", "right"].forEach(function (a) {
+        alignBtns[a].classList.toggle("active", al === a || (a === "left" && (al === "start" || al === "justify")));
+      });
     }
+    function position() {
+      if (!activeRoot) return;
+      var rect = null;
+      if (hasSelection()) rect = savedRange.getBoundingClientRect();
+      if (!rect || (!rect.width && !rect.height)) rect = activeRoot.getBoundingClientRect();
+      var bw = bar.offsetWidth, bh = bar.offsetHeight;
+      var left = Math.min(Math.max(8, rect.left + rect.width / 2 - bw / 2), window.innerWidth - bw - 8);
+      var top = rect.top - bh - 10;
+      if (top < 8) top = Math.min(rect.bottom + 10, window.innerHeight - bh - 8);
+      bar.style.left = left + "px";
+      bar.style.top = Math.max(8, top) + "px";
+    }
+    function show() { bar.classList.add("open"); sync(); position(); }
+    function hide() { bar.classList.remove("open"); activeRoot = null; savedRange = null; }
 
     document.addEventListener("selectionchange", function () {
       var sel = document.getSelection();
-      if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-        toolbar.style.display = "none";
-        return;
-      }
-      var anchor = sel.anchorNode;
-      var el = anchor && anchor.nodeType === 3 ? anchor.parentElement : anchor;
-      if (!el || !el.closest || !el.closest('[contenteditable="true"]')) {
-        toolbar.style.display = "none";
-        return;
-      }
-      var rect = sel.getRangeAt(0).getBoundingClientRect();
-      if (!rect || (rect.width === 0 && rect.height === 0)) {
-        toolbar.style.display = "none";
-        return;
-      }
-      toolbar.style.display = "flex";
-      updateStates();
-      var tw = toolbar.offsetWidth || 160;
-      toolbar.style.left = Math.max(4, rect.left + rect.width / 2 - tw / 2) + "px";
-      toolbar.style.top = Math.max(4, rect.top - 42) + "px";
+      if (!sel || !sel.rangeCount) return;
+      if (!editableFrom(sel.anchorNode)) return; // keep state while using the toolbar's own inputs
+      rememberSelection();
+      show();
     });
+    document.addEventListener("focusout", function () {
+      setTimeout(function () {
+        var a = document.activeElement;
+        if (bar.contains(a)) return;
+        if (a && a.closest && a.closest('[contenteditable="true"]')) return;
+        if (document.querySelector(".editor-link-overlay, .editor-modal-overlay")) return;
+        hide();
+      }, 120);
+    });
+    window.addEventListener("scroll", function () { if (bar.classList.contains("open")) position(); }, true);
+    window.addEventListener("resize", function () { if (bar.classList.contains("open")) position(); });
   }
+
+  // ---------------------------------------------------------------- keyboard shortcuts
+  // Undo/redo/save go to the editor shell, which keeps page-wide history
+  // (text edits, moved photos, deleted blocks -- everything).
+  document.addEventListener("keydown", function (e) {
+    if (!(e.metaKey || e.ctrlKey)) return;
+    var k = e.key.toLowerCase();
+    var action = null;
+    if (k === "z" && !e.shiftKey) action = "undo";
+    else if ((k === "z" && e.shiftKey) || k === "y") action = "redo";
+    else if (k === "s") action = "save";
+    if (!action) return;
+    e.preventDefault();
+    if (window.__editorOnKey) window.__editorOnKey(action);
+  }, true);
 
   // ---------------------------------------------------------------- coarse block reordering
   // .page-content is a permanent part of every page's real structure, so we
@@ -872,7 +1027,10 @@
     if (block.dataset.editorBlockHandle) return;
     block.dataset.editorBlockHandle = "true";
     var cs = window.getComputedStyle(block);
-    if (cs.position === "static") block.style.position = "relative";
+    if (cs.position === "static") {
+      block.style.position = "relative";
+      block.dataset.editorPosAdded = "true"; // editor-only; removed again on save
+    }
     var handle = document.createElement("div");
     handle.className = "editor-block-handle editor-ui";
     handle.title = "Drag to move this whole section up or down";
@@ -1071,8 +1229,7 @@
     setupExistingMailingListBlock(wrap);
   });
   setupTextEditing();
-  setupRichTextToolbar();
-  setupTextStylePanel();
+  setupTextToolbar();
 
   // ---------------------------------------------------------------- serialize
   window.__editorGetCleanHTML = function () {
@@ -1105,6 +1262,12 @@
       flow.remove();
     });
 
+    // the Site Styles live preview temporarily switches off theme.css
+    clone.querySelectorAll("link[disabled]").forEach(function (el) { el.removeAttribute("disabled"); });
+
+    // main.js adds a photo lightbox at runtime; it must not be saved into the page
+    clone.querySelectorAll(".lightbox-overlay").forEach(function (el) { el.remove(); });
+
     // strip main.js runtime carousel artifacts so they don't accumulate across saves
     clone.querySelectorAll(".carousel-nav").forEach(function (el) { el.remove(); });
     clone.querySelectorAll(".carousel-track").forEach(function (track) {
@@ -1115,12 +1278,18 @@
       el.removeAttribute("data-carousel-init");
     });
 
+    clone.querySelectorAll("[data-editor-pos-added]").forEach(function (el) {
+      if (el.style.position === "relative") el.style.position = "";
+      if (!el.getAttribute("style")) el.removeAttribute("style");
+    });
+    clone.querySelectorAll('img[draggable="false"]').forEach(function (el) { el.removeAttribute("draggable"); });
+
     clone.querySelectorAll("[contenteditable]").forEach(function (el) {
       el.removeAttribute("contenteditable");
     });
     [
       "data-editor-setup", "data-editor-text-setup", "data-editor-block-handle",
-      "data-editor-flow-setup", "data-editor-continuous-setup",
+      "data-editor-flow-setup", "data-editor-continuous-setup", "data-editor-pos-added",
     ].forEach(function (attr) {
       clone.querySelectorAll("[" + attr + "]").forEach(function (el) {
         el.removeAttribute(attr);
