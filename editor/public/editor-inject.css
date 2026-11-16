@@ -311,6 +311,7 @@ body.editor-placing, body.editor-placing * { cursor: crosshair !important; }
 .editor-text-toolbar select:disabled { opacity: 0.4; cursor: default; }
 .editor-text-toolbar .editor-tt-font { width: 128px; }
 .editor-text-toolbar .editor-tt-size { width: 62px; }
+.editor-text-toolbar .editor-tt-spacing { width: 104px; }
 .editor-tt-btn {
   min-width: 30px;
   height: 30px;

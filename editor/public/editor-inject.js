@@ -886,6 +886,39 @@
     });
     sizeSel.classList.add("editor-tt-size");
 
+    // line spacing applies to whole paragraphs: every paragraph the selection
+    // touches, or the paragraph holding the cursor
+    var SPACINGS = [
+      { value: "1.15", label: "↕ Single" },
+      { value: "1.25", label: "↕ 1.25" },
+      { value: "1.5", label: "↕ 1.5" },
+      { value: "2", label: "↕ Double" },
+    ];
+    function blocksInSelection() {
+      if (!activeRoot) return [];
+      if (!isFlow()) return [activeRoot];
+      var found = [];
+      if (savedRange) {
+        activeRoot.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li, blockquote, figcaption").forEach(function (el) {
+          if (savedRange.intersectsNode(el)) found.push(el);
+        });
+      }
+      if (!found.length) { var b = currentBlock(); if (b) found.push(b); }
+      return found;
+    }
+    var spacingSel = select("Line spacing", [{ value: "", label: "↕ Spacing" }].concat(SPACINGS).concat([
+      { value: "reset", label: "↕ Site default" },
+    ]), function (val) {
+      if (!val) return;
+      blocksInSelection().forEach(function (el) {
+        el.style.lineHeight = val === "reset" ? "" : val;
+        if (!el.getAttribute("style")) el.removeAttribute("style");
+      });
+      restoreSelection();
+      changed();
+    });
+    spacingSel.classList.add("editor-tt-spacing");
+
     divider();
     var boldBtn = button("<b>B</b>", "Bold (⌘B)", function () { exec("bold"); });
     var italicBtn = button("<i>I</i>", "Italic (⌘I)", function () { exec("italic"); });
@@ -960,6 +993,12 @@
       var px = Math.round(parseFloat(cs.fontSize));
       sizeSel.value = SIZES.indexOf(px) !== -1 ? String(px) : "";
       sizeSel.options[0].textContent = SIZES.indexOf(px) !== -1 ? "Size" : px + "";
+      var lhBlock = blocksInSelection()[0];
+      var lhCs = lhBlock ? window.getComputedStyle(lhBlock) : null;
+      var ratio = lhCs ? parseFloat(lhCs.lineHeight) / parseFloat(lhCs.fontSize) : NaN;
+      var match = SPACINGS.filter(function (o) { return Math.abs(Number(o.value) - ratio) < 0.03; })[0];
+      spacingSel.value = match ? match.value : "";
+      spacingSel.options[0].textContent = "↕ " + (match || isNaN(ratio) ? "Spacing" : Math.round(ratio * 100) / 100);
       boldBtn.classList.toggle("active", document.queryCommandState("bold"));
       italicBtn.classList.toggle("active", document.queryCommandState("italic"));
       underBtn.classList.toggle("active", document.queryCommandState("underline"));

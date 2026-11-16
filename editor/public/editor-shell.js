@@ -20,6 +20,12 @@
   var searchEl = $("page-search");
 
   var HISTORY_LIMIT = 100;
+  var AUTOSAVE_DELAY = 1500; // ms after the last edit before the page file is written
+  var autoSaveOn = true;
+  try { autoSaveOn = localStorage.getItem("editor:autosave") !== "off"; } catch (e) {}
+  var autoSaveTimer = null;
+  var saving = false;
+  var saveAgain = false;
   var SNAPSHOT_DELAY = 500;
 
   // ---------------------------------------------------------------- helpers
@@ -96,13 +102,15 @@
     redoBtn.disabled = !has || st.idx >= st.history.length - 1;
     saveBtn.disabled = !has || !isDirty();
     discardBtn.disabled = !has || !isDirty();
+    saveBtn.hidden = autoSaveOn;
+    discardBtn.hidden = autoSaveOn;
     addBlock.hidden = !has;
     saveStatus.classList.remove("dirty", "ok");
     if (!st.file) saveStatus.textContent = "";
     else if (!st.ready) saveStatus.textContent = "Loading…";
     else if (isDirty()) {
       saveStatus.classList.add("dirty");
-      saveStatus.textContent = "Unsaved changes" + (st.lastDraftAt ? " · draft kept" : "");
+      saveStatus.textContent = autoSaveOn ? "Saving soon…" : "Unsaved changes" + (st.lastDraftAt ? " · draft kept" : "");
     } else saveStatus.textContent = "All changes saved";
     renderTree();
   }
@@ -118,7 +126,14 @@
     if (st.history.length > HISTORY_LIMIT) st.history.shift();
     st.idx = st.history.length - 1;
     autosave();
+    scheduleAutoSave();
     updateUI();
+  }
+
+  function scheduleAutoSave() {
+    clearTimeout(autoSaveTimer);
+    if (!autoSaveOn || !isDirty()) return;
+    autoSaveTimer = setTimeout(function () { save({ auto: true }); }, AUTOSAVE_DELAY);
   }
   function flush() { if (st.snapTimer) snapshotNow(); }
 
@@ -179,7 +194,11 @@
   // ---------------------------------------------------------------- open a page
   function openPage(file, opts) {
     opts = opts || {};
-    if (st.file && st.ready) flush();
+    if (st.file && st.ready) {
+      flush();
+      if (autoSaveOn && isDirty()) save({ auto: true });
+    }
+    clearTimeout(autoSaveTimer);
     st.file = file;
     st.ready = false;
     st.baseline = null;
@@ -247,6 +266,7 @@
       st.ready = true;
       if (w) w.scrollTo(0, st.scrollY);
       if (!isDirty()) autosave(); // stepped back to the saved version: drop the draft
+      scheduleAutoSave();
       updateUI();
       return;
     }
@@ -294,35 +314,57 @@
   }
 
   // ---------------------------------------------------------------- save / discard
-  function save() {
+  // opts.auto: triggered by auto-save (quiet; problems show in the status line)
+  function save(opts) {
+    opts = opts || {};
     if (!st.ready) return Promise.resolve(false);
     flush();
+    clearTimeout(autoSaveTimer);
     if (!isDirty()) return Promise.resolve(true);
+    if (saving) { saveAgain = true; return Promise.resolve(true); }
     var file = st.file;
     var html = st.history[st.idx];
+    saving = true;
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving…";
+    if (opts.auto) { saveStatus.classList.remove("ok"); saveStatus.textContent = "Saving…"; }
     return api("POST", "save", { file: file, html: html }).then(function () {
+      saving = false;
       saveBtn.textContent = "Save";
       delete drafts[file];
       if (file === st.file) {
         st.baseline = html;
         st.lastDraftAt = null;
         updateUI();
-        saveStatus.classList.add("ok");
-        saveStatus.textContent = "Saved · not live until you publish";
+        if (!isDirty()) {
+          saveStatus.classList.add("ok");
+          saveStatus.textContent = (opts.auto ? "Saved automatically" : "Saved") + " · not live until you publish";
+        }
       }
       refreshPublishStatus();
+      // more edits arrived while saving: keep their draft and save them next
+      if (file === st.file && isDirty()) { autosave(); if (saveAgain || autoSaveOn) scheduleAutoSave(); }
+      saveAgain = false;
       return true;
     }).catch(function (err) {
+      saving = false;
+      saveAgain = false;
       saveBtn.textContent = "Save";
       updateUI();
-      alert("Save failed: " + err.message);
+      if (opts.auto) {
+        saveStatus.classList.add("dirty");
+        saveStatus.textContent = "Auto-save failed. Your draft is kept; retrying…";
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = setTimeout(function () { save({ auto: true }); }, 10000);
+      } else {
+        alert("Save failed: " + err.message);
+      }
       return false;
     });
   }
 
-  saveBtn.addEventListener("click", save);
+
+  saveBtn.addEventListener("click", function () { save(); });
   undoBtn.addEventListener("click", undo);
   redoBtn.addEventListener("click", redo);
   discardBtn.addEventListener("click", function () {
@@ -342,7 +384,24 @@
     else if (k === "s") { e.preventDefault(); save(); }
   });
 
-  window.addEventListener("beforeunload", function () { flush(); });
+  window.addEventListener("beforeunload", function () {
+    flush();
+    if (autoSaveOn && st.ready && isDirty() && navigator.sendBeacon) {
+      var blob = new Blob([JSON.stringify({ file: st.file, html: st.history[st.idx] })], { type: "application/json" });
+      navigator.sendBeacon("/__editor__/api/save", blob);
+    }
+  });
+
+  // ---------------------------------------------------------------- auto-save switch
+  var autoSaveToggle = $("autosave-toggle");
+  autoSaveToggle.checked = autoSaveOn;
+  autoSaveToggle.addEventListener("change", function () {
+    autoSaveOn = autoSaveToggle.checked;
+    try { localStorage.setItem("editor:autosave", autoSaveOn ? "on" : "off"); } catch (e) {}
+    toast(autoSaveOn ? "Auto-save on: edits are saved as you go" : "Auto-save off: press Save (⌘S) to keep edits");
+    if (autoSaveOn) scheduleAutoSave(); else clearTimeout(autoSaveTimer);
+    updateUI();
+  });
 
   // ---------------------------------------------------------------- sidebar page tree
   var collapsed = {};
