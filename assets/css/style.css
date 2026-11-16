@@ -319,9 +319,8 @@ p { margin: 0 0 1em; }
 @media (max-width: 700px) { .gallery-grid { grid-template-columns: repeat(2, 1fr); } }
 
 /* ---- Carousel layout (opt-in via data-layout="carousel") ----
-   A horizontal peek-carousel: the current photo is shown at ~85% width so
-   the edge of the next one peeks in on the right. Prev/Next arrows sit on
-   top of the current photo itself; clicking them slides the strip over. */
+   A slideshow: one photo at a time, full width. Prev/Next arrows sit on the
+   photo's edges, a counter shows "3 / 12", and on phones you can swipe. */
 [data-layout="carousel"] {
   position: relative;
   max-width: 700px;
@@ -335,8 +334,8 @@ p { margin: 0 0 1em; }
 }
 .carousel-track > img,
 .carousel-track > a {
-  flex: 0 0 85%;
-  width: 85%;
+  flex: 0 0 100%;
+  width: 100%;
   height: auto;
   aspect-ratio: 4 / 3;
   object-fit: cover;
@@ -369,7 +368,21 @@ p { margin: 0 0 1em; }
 }
 .carousel-nav:hover { background: #4d7cf0; }
 .carousel-nav-prev { left: 12px; }
-.carousel-nav-next { right: calc(15% + 12px); }
+.carousel-nav-next { right: 12px; }
+.carousel-count {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  z-index: 5;
+}
 
 /* ---- About page ---- */
 .about-section {

@@ -289,7 +289,7 @@ button, input, select { font: inherit; color: inherit; }
 }
 .add-block-btn:hover { background: #36363b; }
 .add-block-menu {
-  width: 240px;
+  width: 270px;
   padding: 6px;
   background: #fff;
   border-radius: 12px;
@@ -469,13 +469,69 @@ button, input, select { font: inherit; color: inherit; }
   color: #fff;
   font-size: 13px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
+.toast-action {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #9db8ff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.toast-action:hover { text-decoration: underline; }
 
 /* auto-save switch */
-.switch { display: inline-flex; align-items: center; gap: 7px; padding: 0 6px; cursor: pointer; font-size: 13px; color: var(--ink-2); user-select: none; }
+.switch { display: inline-flex; align-items: center; gap: 7px; padding: 0 6px; cursor: pointer; font-size: 13px; color: var(--ink-2); user-select: none; white-space: nowrap; }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .switch-track { position: relative; width: 30px; height: 18px; border-radius: 9px; background: #d4d4d8; transition: background 0.15s; }
 .switch-knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: transform 0.15s; }
 .switch input:checked + .switch-track { background: var(--ok); }
 .switch input:checked + .switch-track .switch-knob { transform: translateX(12px); }
 .switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ===================================================== page settings panel */
+.field textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+}
+.field textarea:focus, .field input[type="text"]:focus { border-color: var(--accent); }
+.field-help { font-size: 12px; color: var(--ink-3); line-height: 1.4; }
+.field-val.over { color: var(--warn); font-weight: 500; }
+.preview-label, .panel-subhead { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin-bottom: -8px; }
+.panel-subhead { font-size: 13.5px; color: var(--ink); margin-bottom: -10px; }
+.panel-divider { height: 1px; background: var(--line); margin: 4px 0; }
+
+.serp { padding: 14px; border: 1px solid var(--line); border-radius: 10px; font-family: Arial, sans-serif; }
+.serp-site { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.serp-icon { width: 26px; height: 26px; border-radius: 50%; background: #f1f3f4; display: grid; place-items: center; overflow: hidden; flex-shrink: 0; }
+.serp-icon img { width: 16px; height: 16px; object-fit: cover; }
+.serp-name { display: block; font-size: 13px; color: #202124; line-height: 1.2; }
+.serp-url { display: block; font-size: 11.5px; color: #4d5156; line-height: 1.3; }
+.serp-title { font-size: 17px; line-height: 1.3; color: #1a0dab; margin-bottom: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.serp-desc { font-size: 13px; line-height: 1.5; color: #4d5156; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.serp-desc.empty { font-style: italic; color: var(--ink-3); }
+
+.tab-mock { padding: 8px 8px 0; background: #dfe1e5; border-radius: 10px 10px 0 0; }
+.tab-mock-tab {
+  display: flex; align-items: center; gap: 8px;
+  width: 220px; max-width: 100%;
+  height: 32px;
+  padding: 0 12px;
+  background: #fff;
+  border-radius: 8px 8px 0 0;
+  font-size: 12px;
+}
+.tab-mock-icon { width: 16px; height: 16px; flex-shrink: 0; display: grid; place-items: center; }
+.tab-mock-icon img { width: 16px; height: 16px; object-fit: cover; border-radius: 2px; }
+.tab-mock-empty { width: 14px; height: 14px; border-radius: 50%; border: 1.5px dashed #9aa0a6; }
+.tab-mock-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #202124; }
+.icon-actions { display: flex; gap: 8px; margin-top: -6px; }

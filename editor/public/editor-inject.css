@@ -2,7 +2,7 @@
   position: relative;
   display: block;
 }
-
+/* old hover toolbar is still used by "background image" mode */
 .editor-toolbar {
   position: absolute;
   top: 6px;
@@ -11,12 +11,7 @@
   flex-wrap: wrap;
   gap: 4px;
   z-index: 50;
-  opacity: 0;
-  transition: opacity 0.1s ease;
-  max-width: 260px;
-  justify-content: flex-end;
 }
-.editor-img-wrap:hover .editor-toolbar { opacity: 1; }
 
 .editor-btn {
   background: rgba(0,0,0,0.72);
@@ -214,21 +209,46 @@ body.editor-placing, body.editor-placing * { cursor: crosshair !important; }
 }
 
 /* coarse block reordering (whole sections) */
-.editor-block-handle {
+.editor-block-bar {
   position: absolute;
   top: 6px;
   left: 6px;
-  background: rgba(47,111,237,0.9);
+  z-index: 40;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  font: 11px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.page-content > *:hover > .editor-block-bar { opacity: 1; pointer-events: auto; }
+.editor-block-handle {
+  background: rgba(47,111,237,0.92);
   color: #fff;
-  font-size: 11px;
-  padding: 4px 9px;
+  padding: 5px 9px;
   border-radius: 4px;
   cursor: grab;
-  z-index: 40;
-  opacity: 0;
-  transition: opacity 0.15s ease;
 }
-.page-content > *:hover > .editor-block-handle { opacity: 1; }
+.editor-block-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: #fff;
+  color: #c4322b;
+  font: inherit;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(196,50,43,0.35), 0 1px 3px rgba(0,0,0,0.12);
+}
+.editor-block-delete:hover { background: #c4322b; color: #fff; }
+/* show exactly what will be deleted */
+.page-content > *:has(> .editor-block-bar .editor-block-delete:hover) {
+  outline: 2px solid #c4322b;
+  outline-offset: 2px;
+  background-color: rgba(196, 50, 43, 0.05);
+}
 
 /* link picker popover */
 .editor-link-overlay {
@@ -356,3 +376,144 @@ body.editor-placing, body.editor-placing * { cursor: crosshair !important; }
   opacity: 0;
   cursor: pointer;
 }
+
+/* ================================================================ photos & videos */
+.editor-img-wrap img, .editor-img-wrap video { -webkit-user-drag: none; user-select: none; }
+.editor-img-wrap video { pointer-events: none; }  /* clicks select; use the Play button to preview */
+.editor-img-wrap.editor-sized > img,
+.editor-img-wrap.editor-sized > video,
+.editor-img-wrap.editor-sized > a,
+.editor-img-wrap.editor-sized > a > img,
+.editor-img-wrap.editor-sized > a > video { width: 100%; display: block; }
+.editor-img-wrap.editor-dragging { opacity: 0.45; }
+
+.editor-media-frame {
+  position: absolute;
+  z-index: 60;
+  pointer-events: none;
+  border-radius: 2px;
+  transition: box-shadow 0.1s ease;
+}
+.editor-img-wrap:hover > .editor-media-frame { box-shadow: 0 0 0 2px rgba(36, 87, 214, 0.45); }
+.editor-img-wrap.editor-selected > .editor-media-frame { box-shadow: 0 0 0 2px #2457d6; }
+
+.editor-media-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border: 2px solid #2457d6;
+  border-radius: 50%;
+  pointer-events: auto;
+  display: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+}
+.editor-selected .editor-media-handle { display: block; }
+.editor-media-handle-nw { left: -8px; top: -8px; cursor: nwse-resize !important; }
+.editor-media-handle-ne { right: -8px; top: -8px; cursor: nesw-resize !important; }
+.editor-media-handle-sw { left: -8px; bottom: -8px; cursor: nesw-resize !important; }
+.editor-media-handle-se { right: -8px; bottom: -8px; cursor: nwse-resize !important; }
+
+.editor-media-toolbar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: none;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid #e3e3e6;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(20, 20, 30, 0.16), 0 1px 3px rgba(20, 20, 30, 0.08);
+  pointer-events: auto;
+  white-space: nowrap;
+  font: 12.5px/1 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  color: #1d1d1f;
+  z-index: 2;
+}
+.editor-selected .editor-media-toolbar { display: flex; }
+.editor-resizing .editor-media-toolbar, .editor-dragging .editor-media-toolbar { display: none; }
+.editor-mt-btn {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer !important;
+}
+.editor-mt-btn * { cursor: pointer !important; }
+.editor-mt-btn:hover { background: #f2f2f4; }
+.editor-mt-btn.active { background: #e8eefc; color: #2457d6; }
+.editor-mt-btn.danger:hover { background: #fbe4e2; color: #c4322b; }
+.editor-mt-sep { width: 1px; height: 16px; margin: 0 3px; background: #e3e3e6; }
+
+.editor-size-badge {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: rgba(20, 20, 24, 0.85);
+  color: #fff;
+  font: 600 12px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  pointer-events: none;
+}
+
+.editor-drop-line {
+  position: fixed;
+  display: none;
+  height: 4px;
+  border-radius: 2px;
+  background: #2457d6;
+  box-shadow: 0 0 0 3px rgba(36, 87, 214, 0.2);
+  pointer-events: none;
+  z-index: 9900;
+}
+
+.editor-upload-placeholder {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  min-height: 140px;
+  padding: 20px;
+  border: 2px dashed rgba(36, 87, 214, 0.45);
+  border-radius: 6px;
+  background: rgba(36, 87, 214, 0.05);
+  font: 13px/1.3 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #2457d6;
+}
+.gallery-grid > .editor-upload-placeholder { min-height: 0; aspect-ratio: 1; padding: 12px; }
+.editor-upload-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-upload-bar { height: 4px; border-radius: 2px; background: rgba(36, 87, 214, 0.15); overflow: hidden; }
+.editor-upload-bar > div { width: 0; height: 100%; background: #2457d6; transition: width 0.2s ease; }
+
+/* hand cursor over every photo/video while editing; this beats the live
+   site's zoom-in cursor (style.css), which stays as-is for visitors */
+.page-content img, .page-content video,
+.editor-img-wrap, .editor-img-wrap * { cursor: pointer !important; }
+.editor-img-wrap.editor-dragging, .editor-img-wrap.editor-dragging * { cursor: grabbing !important; }
+.editor-media-handle-nw, .editor-media-handle-se { cursor: nwse-resize !important; }
+.editor-media-handle-ne, .editor-media-handle-sw { cursor: nesw-resize !important; }
+
+/* slideshow photos are wrapped for editing; give the wrappers the slide layout */
+.carousel-track > .editor-img-wrap { flex: 0 0 100%; width: 100%; }
+.carousel-track > .editor-img-wrap > img,
+.carousel-track > .editor-img-wrap > a,
+.carousel-track > .editor-img-wrap > a > img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+.carousel--fit .carousel-track > .editor-img-wrap > img,
+.carousel--fit .carousel-track > .editor-img-wrap > a > img { aspect-ratio: auto; object-fit: contain; }

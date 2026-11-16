@@ -25,7 +25,8 @@
   try { autoSaveOn = localStorage.getItem("editor:autosave") !== "off"; } catch (e) {}
   var autoSaveTimer = null;
   var saving = false;
-  var saveAgain = false;
+  var savePromise = null;              // the save in flight, if any
+  var draftPromise = Promise.resolve(); // the latest draft write
   var SNAPSHOT_DELAY = 500;
 
   // ---------------------------------------------------------------- helpers
@@ -41,6 +42,25 @@
         return data;
       });
     });
+  }
+
+  // toast with an Undo button (e.g. after deleting a section)
+  function notice(msg, withUndo) {
+    var t = $("toast");
+    t.innerHTML = "";
+    var span = document.createElement("span");
+    span.textContent = msg;
+    t.appendChild(span);
+    if (withUndo) {
+      var b = document.createElement("button");
+      b.className = "toast-action";
+      b.textContent = "Undo";
+      b.addEventListener("click", function () { t.hidden = true; undo(); });
+      t.appendChild(b);
+    }
+    t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.hidden = true; }, 6000);
   }
 
   var toastTimer = null;
@@ -105,6 +125,7 @@
     saveBtn.hidden = autoSaveOn;
     discardBtn.hidden = autoSaveOn;
     addBlock.hidden = !has;
+    $("settings-btn").disabled = !has;
     saveStatus.classList.remove("dirty", "ok");
     if (!st.file) saveStatus.textContent = "";
     else if (!st.ready) saveStatus.textContent = "Loading…";
@@ -141,7 +162,7 @@
     var file = st.file;
     if (isDirty()) {
       var html = st.history[st.idx];
-      api("PUT", "drafts/" + encodeURIComponent(file), { html: html }).then(function (d) {
+      draftPromise = api("PUT", "drafts/" + encodeURIComponent(file), { html: html }).then(function (d) {
         drafts[file] = d.savedAt;
         if (file === st.file) { st.lastDraftAt = d.savedAt; updateUI(); }
       }).catch(function () {});
@@ -238,6 +259,7 @@
       script.onload = function () {
         win.__editorOnDirty = onDirty;
         win.__editorOnKey = onKey;
+        win.__editorOnNotice = notice;
         applyThemePreview();
         onEditorReady();
       };
@@ -260,6 +282,7 @@
   });
 
   function onEditorReady() {
+    setTimeout(function () { if (window.__refreshPageSettings) window.__refreshPageSettings(); }, 0);
     var w = frameWin();
     if (st.restoring) {
       st.restoring = false;
@@ -321,14 +344,14 @@
     flush();
     clearTimeout(autoSaveTimer);
     if (!isDirty()) return Promise.resolve(true);
-    if (saving) { saveAgain = true; return Promise.resolve(true); }
+    if (saving) return savePromise.then(function () { return save(opts); });
     var file = st.file;
     var html = st.history[st.idx];
     saving = true;
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving…";
     if (opts.auto) { saveStatus.classList.remove("ok"); saveStatus.textContent = "Saving…"; }
-    return api("POST", "save", { file: file, html: html }).then(function () {
+    savePromise = api("POST", "save", { file: file, html: html }).then(function () {
       saving = false;
       saveBtn.textContent = "Save";
       delete drafts[file];
@@ -343,12 +366,10 @@
       }
       refreshPublishStatus();
       // more edits arrived while saving: keep their draft and save them next
-      if (file === st.file && isDirty()) { autosave(); if (saveAgain || autoSaveOn) scheduleAutoSave(); }
-      saveAgain = false;
+      if (file === st.file && isDirty()) { autosave(); scheduleAutoSave(); }
       return true;
     }).catch(function (err) {
       saving = false;
-      saveAgain = false;
       saveBtn.textContent = "Save";
       updateUI();
       if (opts.auto) {
@@ -361,10 +382,22 @@
       }
       return false;
     });
+    return savePromise;
   }
 
 
   saveBtn.addEventListener("click", function () { save(); });
+
+  // Before anything that rewrites every page (menu, styles, new page, site
+  // icon): finish writing the open page first, so an auto-save landing
+  // afterwards can't put back the old version of that page.
+  function settle() {
+    if (!st.ready) return Promise.all([savePromise, draftPromise]);
+    flush();
+    clearTimeout(autoSaveTimer);
+    var p = autoSaveOn && isDirty() ? save({ auto: true }) : savePromise;
+    return Promise.all([p, draftPromise]);
+  }
   undoBtn.addEventListener("click", undo);
   redoBtn.addEventListener("click", redo);
   discardBtn.addEventListener("click", function () {
@@ -579,11 +612,12 @@
     var name = $("np-name").value.trim();
     if (!name) { $("np-name").focus(); return; }
     var copy = document.querySelector('input[name="np-start"]:checked').value === "copy";
-    if (st.ready) flush();
-    api("POST", "pages", {
+    settle().then(function () {
+      return api("POST", "pages", {
       name: name,
       duplicateFrom: copy ? npCopyFrom : undefined,
       addToMenu: $("np-menu").checked,
+      });
     }).then(function (data) {
       npModal.hidden = true;
       return loadPagesAndNav().then(function () {
@@ -740,11 +774,12 @@
   });
   $("st-apply-btn").addEventListener("click", function () {
     var settings = readThemeForm();
-    if (st.ready) flush();
     var btn = this;
     btn.disabled = true;
     btn.textContent = "Applying…";
-    api("POST", "theme", { settings: settings }).then(function () {
+    settle().then(function () {
+      return api("POST", "theme", { settings: settings });
+    }).then(function () {
       btn.textContent = "Apply to all pages";
       savedTheme = settings;
       closeStyles();
@@ -758,6 +793,174 @@
       alert("Couldn't save styles: " + err.message);
     });
   });
+
+  // ---------------------------------------------------------------- page settings (title, description, site icon)
+  var settingsPanel = $("settings-panel");
+  var settingsBtn = $("settings-btn");
+  var psTitle = $("ps-title");
+  var psDesc = $("ps-desc");
+  var iconUrl = null;
+
+  function showPanel(panel, btn, on) {
+    panel.classList.toggle("open", on);
+    panel.setAttribute("aria-hidden", on ? "false" : "true");
+    btn.classList.toggle("on", on);
+  }
+
+  function frameDoc() { return st.ready ? frame.contentDocument : null; }
+  function metaDesc(doc, create) {
+    var m = doc.querySelector('meta[name="description"]');
+    if (!m && create) {
+      m = doc.createElement("meta");
+      m.setAttribute("name", "description");
+      var t = doc.querySelector("title");
+      if (t && t.nextSibling) doc.head.insertBefore(m, t.nextSibling); else doc.head.appendChild(m);
+    }
+    return m;
+  }
+
+  function counter(el, n, limit) {
+    el.textContent = n + " / " + limit;
+    el.classList.toggle("over", n > limit);
+  }
+
+  function renderSettingsPreview() {
+    var title = psTitle.value.trim();
+    var desc = psDesc.value.trim();
+    counter($("ps-title-count"), title.length, 60);
+    counter($("ps-desc-count"), desc.length, 160);
+    var slug = (st.file || "").replace(/\.html$/, "");
+    $("ps-serp-url").textContent = "https://carochou.com" + (slug && slug !== "index" ? " › " + slug : "");
+    $("ps-serp-title").textContent = title || "(no title)";
+    var d = $("ps-serp-desc");
+    d.textContent = desc || "No description yet. Google will pick some text from the page instead.";
+    d.classList.toggle("empty", !desc);
+    $("ps-tab-title").textContent = title || st.file || "";
+    [$("ps-serp-icon"), $("ps-tab-icon")].forEach(function (img) {
+      img.hidden = !iconUrl;
+      if (iconUrl) img.src = iconUrl;
+    });
+    $("ps-tab-icon-empty").hidden = !!iconUrl;
+    $("ps-icon-remove-btn").hidden = !iconUrl;
+    $("ps-icon-upload-btn").textContent = iconUrl ? "Replace icon" : "Upload icon";
+  }
+
+  function loadIcon() {
+    return api("GET", "icon").then(function (d) {
+      iconUrl = d.url;
+      // show it on the editor's own tab too
+      var link = document.querySelector('link[rel="icon"]');
+      if (iconUrl) {
+        if (!link) { link = document.createElement("link"); link.rel = "icon"; document.head.appendChild(link); }
+        link.href = iconUrl;
+      } else if (link) link.remove();
+      renderSettingsPreview();
+    }).catch(function () {});
+  }
+
+  window.__refreshPageSettings = function () {
+    if (!settingsPanel.classList.contains("open")) return;
+    var doc = frameDoc();
+    if (!doc) return;
+    $("ps-page-name").textContent = labels[st.file] || niceName(st.file);
+    if (document.activeElement !== psTitle) psTitle.value = doc.title;
+    var m = metaDesc(doc, false);
+    if (document.activeElement !== psDesc) psDesc.value = m ? m.getAttribute("content") || "" : "";
+    renderSettingsPreview();
+  };
+
+  function openSettings() {
+    if (!st.ready) return;
+    if (stylesPanel.classList.contains("open")) closeStyles();
+    showPanel(settingsPanel, settingsBtn, true);
+    window.__refreshPageSettings();
+    loadIcon();
+  }
+  settingsBtn.addEventListener("click", function () {
+    if (settingsPanel.classList.contains("open")) showPanel(settingsPanel, settingsBtn, false);
+    else openSettings();
+  });
+  $("settings-close-btn").addEventListener("click", function () { showPanel(settingsPanel, settingsBtn, false); });
+
+  psTitle.addEventListener("input", function () {
+    var doc = frameDoc();
+    if (!doc) return;
+    doc.title = psTitle.value;
+    renderSettingsPreview();
+    onDirty();
+  });
+  psDesc.addEventListener("input", function () {
+    var doc = frameDoc();
+    if (!doc) return;
+    metaDesc(doc, true).setAttribute("content", psDesc.value.replace(/\s*\n\s*/g, " "));
+    renderSettingsPreview();
+    onDirty();
+  });
+
+  // crop to a centered square and scale to 512px PNG in the browser
+  function squarePng(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        var side = Math.min(img.naturalWidth, img.naturalHeight);
+        var size = Math.min(512, side) || 512;
+        var c = document.createElement("canvas");
+        c.width = c.height = size;
+        c.getContext("2d").drawImage(img,
+          (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+        URL.revokeObjectURL(url);
+        c.toBlob(function (b) { b ? resolve(b) : reject(new Error("couldn't convert image")); }, "image/png");
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("That file isn't an image this browser can read.")); };
+      img.src = url;
+    });
+  }
+
+  function afterIconChange(msg) {
+    return loadIcon().then(function () {
+      toast(msg);
+      refreshPublishStatus();
+      if (st.file) openPage(st.file, { autoRestore: true, keepScroll: true });
+    });
+  }
+
+  $("ps-icon-upload-btn").addEventListener("click", function () { $("ps-icon-file").click(); });
+  $("ps-icon-file").addEventListener("change", function () {
+    var file = this.files[0];
+    this.value = "";
+    if (!file) return;
+    var btn = $("ps-icon-upload-btn");
+    btn.disabled = true;
+    btn.textContent = "Uploading…";
+    squarePng(file).then(function (blob) {
+      return settle().then(function () {
+        var fd = new FormData();
+        fd.append("icon", blob, "favicon.png");
+        return fetch("/__editor__/api/icon", { method: "POST", body: fd }).then(function (r) {
+          return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || "upload failed"); });
+        });
+      });
+    }).then(function () {
+      return afterIconChange("Site icon added to every page. Publish to make it live.");
+    }).catch(function (err) {
+      alert("Couldn't use that image: " + err.message);
+    }).then(function () { btn.disabled = false; renderSettingsPreview(); });
+  });
+  $("ps-icon-remove-btn").addEventListener("click", function () {
+    if (!confirm("Remove the site icon from every page?")) return;
+    settle().then(function () { return api("DELETE", "icon"); })
+      .then(function () { return afterIconChange("Site icon removed."); })
+      .catch(function (err) { alert("Couldn't remove the icon: " + err.message); });
+  });
+
+  // only one right-hand panel at a time
+  stylesBtn.addEventListener("click", function () {
+    if (stylesPanel.classList.contains("open") || !settingsPanel.classList.contains("open")) return;
+    showPanel(settingsPanel, settingsBtn, false);
+  }, true);
+
+  loadIcon();
 
   // ---------------------------------------------------------------- publish
   var pubModal = $("publish-modal");
@@ -1010,8 +1213,9 @@
   $("nav-add-dropdown-btn").addEventListener("click", function () { navState.push({ type: "dropdown", label: "New menu", href: "", children: [] }); renderNav(); });
   $("nav-cancel-btn").addEventListener("click", function () { navModal.hidden = true; });
   $("nav-save-btn").addEventListener("click", function () {
-    if (st.ready) flush();
-    api("POST", "nav", { items: navState }).then(function () {
+    settle().then(function () {
+      return api("POST", "nav", { items: navState });
+    }).then(function () {
       navModal.hidden = true;
       toast("Menu updated on every page");
       refreshPublishStatus();

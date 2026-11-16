@@ -82,7 +82,9 @@ const storage = multer.diskStorage({
     cb(null, final);
   },
 });
-const upload = multer({ storage, limits: { fileSize: 25 * 1024 * 1024 } });
+// photos and videos; GitHub rejects files over 100 MB, so stay just under
+const MAX_UPLOAD_MB = 95;
+const upload = multer({ storage, limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 } });
 
 app.post("/__editor__/api/upload", upload.single("image"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "no file" });
@@ -130,6 +132,55 @@ app.post("/__editor__/api/theme", (req, res) => {
     const next = withThemeLink(html);
     if (next !== html) fs.writeFileSync(p, next);
   });
+  res.json({ ok: true });
+});
+
+// ---- Site icon (favicon): one image for every page ----
+const ICON_DIR = path.join(SITE_ROOT, "assets", "images", "site");
+const ICON_PATH = path.join(ICON_DIR, "favicon.png");
+const ICON_LINK_RE = /[ \t]*<link rel="(?:icon|shortcut icon|apple-touch-icon)"[^>]*>\n?/gi;
+
+function iconTags() {
+  if (!fs.existsSync(ICON_PATH)) return "";
+  const v = Math.round(fs.statSync(ICON_PATH).mtimeMs);
+  const href = `assets/images/site/favicon.png?v=${v}`;
+  return `<link rel="icon" type="image/png" href="${href}">\n<link rel="apple-touch-icon" href="${href}">\n`;
+}
+
+function withIcon(html, tags) {
+  const stripped = html.replace(ICON_LINK_RE, "");
+  if (!tags) return stripped;
+  return stripped.replace(/<\/head>/i, `${tags}</head>`);
+}
+
+function applyIconEverywhere() {
+  const tags = iconTags();
+  editableFilePaths().forEach((p) => {
+    const html = fs.readFileSync(p, "utf8");
+    const next = withIcon(html, tags);
+    if (next !== html) fs.writeFileSync(p, next);
+  });
+}
+
+const iconUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+app.get("/__editor__/api/icon", (req, res) => {
+  if (!fs.existsSync(ICON_PATH)) return res.json({ url: null });
+  res.json({ url: "/assets/images/site/favicon.png?v=" + Math.round(fs.statSync(ICON_PATH).mtimeMs) });
+});
+
+// the editor sends an already square-cropped PNG
+app.post("/__editor__/api/icon", iconUpload.single("icon"), (req, res) => {
+  if (!req.file || req.file.mimetype !== "image/png") return res.status(400).json({ error: "PNG image required" });
+  fs.mkdirSync(ICON_DIR, { recursive: true });
+  fs.writeFileSync(ICON_PATH, req.file.buffer);
+  applyIconEverywhere();
+  res.json({ ok: true });
+});
+
+app.delete("/__editor__/api/icon", (req, res) => {
+  if (fs.existsSync(ICON_PATH)) fs.unlinkSync(ICON_PATH);
+  applyIconEverywhere();
   res.json({ ok: true });
 });
 
@@ -252,7 +303,7 @@ app.post("/__editor__/api/pages", (req, res) => {
 <title>${escapeHtml(title)} &mdash; caroline chou</title>
 <meta name="description" content="${escapeHtml(title)}">
 <link rel="stylesheet" href="assets/css/style.css">${themeLink}
-</head>
+${iconTags()}</head>
 <body>
 ${headerMatch[0]}
 
@@ -466,6 +517,15 @@ app.post("/__editor__/api/publish", (req, res) => {
       });
     });
   });
+});
+
+// upload errors (e.g. file too big) as JSON the editor can show
+app.use((err, req, res, next) => {
+  if (!err) return next();
+  const msg = err.code === "LIMIT_FILE_SIZE"
+    ? `That file is too big. The limit is ${MAX_UPLOAD_MB} MB (GitHub won't accept bigger files).`
+    : String(err.message || err);
+  res.status(400).json({ error: msg });
 });
 
 app.listen(PORT, () => {

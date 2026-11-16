@@ -13,7 +13,7 @@
 
   // Repeating galleries: reorder, replace, delete, layout control. Simple by
   // design -- no per-tile resize, since the grid/columns setting governs size.
-  var GRID_GALLERY_SELECTORS = [".gallery-grid", ".about-images"];
+  var GRID_GALLERY_SELECTORS = [".gallery-grid", ".about-images", ".carousel-track"];
   var LINK_GALLERY_SELECTORS = [".work-grid"];
   var ROW_SELECTORS = [".media-row"];
 
@@ -404,7 +404,6 @@
     imgEl.style.zIndex = "";
     imgEl.classList.remove("editor-bg-image");
     toolbar.remove();
-    imgEl.draggable = false;
     var wrap = setupImageBlock(imgEl, {
       allowDelete: true, allowLink: true, allowSize: true,
       allowBackground: true, allowFreePosition: true,
@@ -415,137 +414,670 @@
     markDirty();
   }
 
-  // ---------------------------------------------------------------- gallery images (grid/link/row)
-  // Deliberately simple: replace/crop/link/delete only. Size is governed by
-  // the gallery's own Columns setting, and there's no free-position escape
-  // hatch here -- an image that needs that should be a standalone block.
-  function wrapGalleryItem(item, imgEl, opts) {
-    imgEl.draggable = false;
-    var wrap = document.createElement("div");
-    wrap.className = "editor-img-wrap";
-    item.parentNode.insertBefore(wrap, item);
-    wrap.appendChild(item);
+  // ================================================================ PHOTOS & VIDEOS
+  // Click a photo/video to select it (no lightbox zoom in the editor). A
+  // selected item gets an outline, corner handles to resize, a toolbar, and
+  // can be dragged to a new spot (a blue line shows where it will land).
+  // Photos in galleries/carousels are reordered by dragging within the
+  // gallery instead; their size comes from the gallery layout.
 
-    var toolbar = document.createElement("div");
-    toolbar.className = "editor-toolbar editor-ui";
-    toolbar.appendChild(makeBtn("Replace", function () {
-      pickAndUpload(function (path) { imgEl.src = path; markDirty(); });
-    }));
-    toolbar.appendChild(makeBtn("Crop", function () {
-      openCropModal(imgEl, function (path) { imgEl.src = path; markDirty(); });
-    }));
-    if (opts.allowLink) {
-      toolbar.appendChild(makeBtn("Link", function () {
-        var existingA = imgEl.closest("a");
-        var existing = existingA ? (existingA.getAttribute("href") || "") : "";
-        openLinkPicker(existing, function (href) { setImageLink(imgEl, href); markDirty(); });
-      }));
-    }
-    if (opts.allowDelete) {
-      toolbar.appendChild(makeBtn("Delete", function () { wrap.remove(); markDirty(); }, true));
-    }
-    wrap.appendChild(toolbar);
-    return wrap;
+  var MEDIA_STYLE_PROPS = ["position", "left", "top", "width", "zIndex", "marginLeft", "marginRight", "float"];
+  var selectedWrap = null;
+
+  // stop the browser's own image dragging while editing; remembered so that
+  // saving removes only what the editor added
+  function noNativeDrag(el) {
+    if (el.hasAttribute("draggable")) return;
+    el.draggable = false;
+    el.dataset.editorUndrag = "1";
   }
 
-  // ---------------------------------------------------------------- standalone image blocks
-  // Used for project photos and any image added via the "+ Image" tool.
-  // Gets size presets and an explicit, click-triggered "Free position"
-  // toggle -- promoting/returning only ever happens on a deliberate click,
-  // never as a side effect of dragging.
-  function setupImageBlock(imgEl, opts) {
-    opts = opts || {};
-    imgEl.draggable = false;
+  function mediaOf(wrap) {
+    return wrap.querySelector(":scope > img, :scope > video, :scope > a > img, :scope > a > video") ||
+      wrap.querySelector("img, video"); // e.g. project tiles: <a><div><img></div><span>title</span></a>
+  }
+  function isVideo(el) { return el && el.tagName === "VIDEO"; }
 
-    var wrap = document.createElement("div");
-    wrap.className = "editor-img-wrap";
-    imgEl.parentNode.insertBefore(wrap, imgEl);
-    wrap.appendChild(imgEl);
+  // ---- uploads with progress (videos can be big)
+  var MAX_MB = 95;
+  function checkFile(file) {
+    var mb = file.size / 1024 / 1024;
+    var vid = /^video\//.test(file.type);
+    if (!/^(image|video)\//.test(file.type)) { alert("“" + file.name + "” isn't a photo or video."); return false; }
+    if (mb > MAX_MB) {
+      alert("“" + file.name + "” is " + Math.round(mb) + " MB, over the " + MAX_MB + " MB limit GitHub allows.\n\n" +
+        "Make it smaller first (e.g. export at 1080p, or compress with HandBrake), or upload it to YouTube/Vimeo.");
+      return false;
+    }
+    if (vid && mb > 40) {
+      return confirm("“" + file.name + "” is " + Math.round(mb) + " MB. Big videos load slowly for visitors, " +
+        "especially on phones. A compressed 1080p version is usually under 30 MB.\n\nUpload it anyway?");
+    }
+    return true;
+  }
+  function uploadWithProgress(file, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", "/__editor__/api/upload?page=" + encodeURIComponent(pageSlug));
+      xhr.upload.onprogress = function (e) { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+      xhr.onload = function () {
+        var d = null;
+        try { d = JSON.parse(xhr.responseText); } catch (err) {}
+        if (!d || xhr.status >= 400 || d.error) reject(new Error((d && d.error) || "upload failed"));
+        else resolve(d.path);
+      };
+      xhr.onerror = function () { reject(new Error("couldn't reach the editor server")); };
+      var fd = new FormData();
+      fd.append("image", file);
+      xhr.send(fd);
+    });
+  }
+  function pickFiles(accept, multiple, cb) {
+    var input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.multiple = !!multiple;
+    input.addEventListener("change", function () {
+      var files = Array.prototype.filter.call(input.files, checkFile);
+      if (files.length) cb(files);
+    });
+    input.click();
+  }
+  function makePlaceholder(file) {
+    var ph = document.createElement("div");
+    ph.className = "editor-upload-placeholder editor-ui";
+    ph.contentEditable = "false";
+    var label = document.createElement("div");
+    label.className = "editor-upload-label";
+    label.textContent = "Uploading " + file.name + "…";
+    var bar = document.createElement("div");
+    bar.className = "editor-upload-bar";
+    var fill = document.createElement("div");
+    bar.appendChild(fill);
+    ph.appendChild(label);
+    ph.appendChild(bar);
+    ph.setProgress = function (f) { fill.style.width = Math.round(f * 100) + "%"; };
+    return ph;
+  }
+  function createMediaEl(path, file) {
+    var el;
+    if (/^video\//.test(file.type) || /\.(mp4|mov|webm|m4v)$/i.test(path)) {
+      el = document.createElement("video");
+      el.setAttribute("src", path);
+      el.setAttribute("controls", "");
+      el.setAttribute("playsinline", "");
+      el.setAttribute("preload", "metadata");
+    } else {
+      el = document.createElement("img");
+      el.setAttribute("src", path);
+      el.setAttribute("loading", "lazy");
+      el.setAttribute("alt", "");
+    }
+    return el;
+  }
 
-    var toolbar = document.createElement("div");
-    toolbar.className = "editor-toolbar editor-ui";
-    wrap.appendChild(toolbar);
+  // ---- selection
+  function selectWrap(wrap) {
+    if (selectedWrap === wrap) return;
+    deselect();
+    selectedWrap = wrap;
+    wrap.classList.add("editor-selected");
+    var sel = document.getSelection();
+    if (sel) sel.removeAllRanges();
+    positionFrame(wrap);
+  }
+  function deselect() {
+    if (!selectedWrap) return;
+    selectedWrap.classList.remove("editor-selected");
+    var v = mediaOf(selectedWrap);
+    selectedWrap = null;
+    if (isVideo(v) && !v.hasAttribute("autoplay")) v.pause();
+  }
 
-    var isFree = false;
-    var dragHandle = null;
+  // the outline/handles/toolbar sit exactly over the photo, which can be
+  // narrower than its wrapper
+  function positionFrame(wrap) {
+    var media = mediaOf(wrap);
+    var frame = wrap.querySelector(":scope > .editor-media-frame");
+    if (!media || !frame) return;
+    var w = wrap.getBoundingClientRect();
+    var m = media.getBoundingClientRect();
+    frame.style.left = (m.left - w.left) + "px";
+    frame.style.top = (m.top - w.top) + "px";
+    frame.style.width = m.width + "px";
+    frame.style.height = m.height + "px";
+  }
+  function positionAllFrames() {
+    document.querySelectorAll(".editor-img-wrap").forEach(positionFrame);
+  }
+  window.addEventListener("resize", positionAllFrames);
+  window.addEventListener("load", positionAllFrames);
+  document.addEventListener("load", function (e) {
+    var t = e.target;
+    if (t && (t.tagName === "IMG" || t.tagName === "VIDEO")) {
+      var w = t.closest(".editor-img-wrap");
+      if (w) positionFrame(w);
+    }
+  }, true);
+  document.addEventListener("loadedmetadata", function (e) {
+    var w = e.target.closest && e.target.closest(".editor-img-wrap");
+    if (w) positionFrame(w);
+  }, true);
 
-    function renderToolbar() {
-      toolbar.innerHTML = "";
-      toolbar.appendChild(makeBtn("Replace", function () {
-        pickAndUpload(function (path) { imgEl.src = path; markDirty(); });
+  // clicks on photos select them -- never zoom (main.js lightbox), follow a
+  // link, or flip a carousel while editing
+  window.addEventListener("click", function (e) {
+    var t = e.target;
+    if (!t.closest || t.closest(".editor-ui")) return;
+    var wrap = t.closest(".editor-img-wrap");
+    var media = wrap || t.closest("img, video");
+    if (!media || !media.closest(".page-content")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (wrap) selectWrap(wrap);
+  }, true);
+  document.addEventListener("mousedown", function (e) {
+    if (!selectedWrap) return;
+    var t = e.target;
+    if (selectedWrap.contains(t)) return;
+    if (t.closest && t.closest(".editor-crop-overlay, .editor-link-overlay, .editor-drop-line")) return;
+    deselect();
+  }, true);
+  document.addEventListener("keydown", function (e) {
+    if (!selectedWrap) return;
+    if (e.key === "Escape") { deselect(); return; }
+    var a = document.activeElement;
+    var typing = a && (a.isContentEditable || a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
+    if ((e.key === "Delete" || e.key === "Backspace") && !typing && selectedWrap.dataset.editorDeletable) {
+      e.preventDefault();
+      removeWrap(selectedWrap);
+    }
+  });
+
+  function removeWrap(wrap) {
+    if (wrap === selectedWrap) deselect();
+    var parent = wrap.parentElement;
+    wrap.remove();
+    cleanupEmptyHolder(parent);
+    markDirty();
+  }
+  // a .project-media box left with nothing in it goes too
+  function cleanupEmptyHolder(el) {
+    if (!el || !el.classList || !el.classList.contains("project-media")) return;
+    var real = Array.prototype.filter.call(el.childNodes, function (n) {
+      if (n.nodeType === 3) return n.textContent.trim();
+      return !(n.classList && n.classList.contains("editor-ui"));
+    });
+    if (!real.length) el.remove();
+  }
+
+  // ---- toolbar
+  function tbBtn(html, title, onClick, cls) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "editor-mt-btn" + (cls ? " " + cls : "");
+    b.innerHTML = html;
+    b.title = title;
+    b.addEventListener("mousedown", function (e) { e.preventDefault(); e.stopPropagation(); });
+    b.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); onClick(b); });
+    return b;
+  }
+  function tbSep() { var s = document.createElement("span"); s.className = "editor-mt-sep"; return s; }
+  var ICON = {
+    left: "<svg width='14' height='14' viewBox='0 0 14 14'><path d='M1.5 1.5v11' stroke='currentColor' stroke-width='1.4'/><rect x='4' y='4' width='8' height='6' rx='1' fill='currentColor'/></svg>",
+    center: "<svg width='14' height='14' viewBox='0 0 14 14'><path d='M7 1v2.5M7 10.5V13' stroke='currentColor' stroke-width='1.4'/><rect x='3' y='4' width='8' height='6' rx='1' fill='currentColor'/></svg>",
+    right: "<svg width='14' height='14' viewBox='0 0 14 14'><path d='M12.5 1.5v11' stroke='currentColor' stroke-width='1.4'/><rect x='2' y='4' width='8' height='6' rx='1' fill='currentColor'/></svg>",
+    trash: "<svg width='14' height='14' viewBox='0 0 14 14'><path d='M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.6 8.5h5.8l.6-8.5' fill='none' stroke='currentColor' stroke-width='1.3' stroke-linejoin='round'/></svg>",
+  };
+
+  function alignOf(wrap) {
+    var l = wrap.style.marginLeft, r = wrap.style.marginRight;
+    if (l === "auto" && r === "auto") return "center";
+    if (l === "auto") return "right";
+    if (r === "auto") return "left";
+    return wrap.style.width ? "left" : "none";
+  }
+  function setAlign(wrap, a) {
+    wrap.style.float = "";
+    wrap.style.marginLeft = a === "left" ? "0px" : "auto";
+    wrap.style.marginRight = a === "right" ? "0px" : "auto";
+    if (a === "left") wrap.style.marginRight = "auto";
+    if (a === "right") wrap.style.marginLeft = "auto";
+  }
+
+  function buildToolbar(wrap, opts) {
+    var tb = wrap.querySelector(":scope > .editor-media-frame > .editor-media-toolbar");
+    tb.innerHTML = "";
+    var media = mediaOf(wrap);
+    var vid = isVideo(media);
+    var free = wrap.dataset.editorFree === "true";
+
+    tb.appendChild(tbBtn("Replace", vid ? "Replace with another video or photo" : "Replace with another photo or video", function () {
+      pickFiles("image/*,video/*", false, function (files) {
+        replaceMedia(wrap, files[0], opts);
+      });
+    }));
+    if (!vid) {
+      tb.appendChild(tbBtn("Crop", "Crop this photo", function () {
+        openCropModal(media, function (path) { media.src = path; markDirty(); });
       }));
-      toolbar.appendChild(makeBtn("Crop", function () {
-        openCropModal(imgEl, function (path) { imgEl.src = path; markDirty(); });
+    }
+    if (opts.allowLink !== false) {
+      var a = media.closest("a");
+      tb.appendChild(tbBtn(a ? "Link ✓" : "Link", "Make this open a page or website when clicked", function () {
+        var existing = media.closest("a");
+        openLinkPicker(existing ? existing.getAttribute("href") || "" : "", function (href) {
+          setImageLink(media, href);
+          markDirty();
+          buildToolbar(wrap, opts);
+        });
       }));
-      if (opts.allowLink !== false) {
-        toolbar.appendChild(makeBtn("Link", function () {
-          var existingA = imgEl.closest("a");
-          var existing = existingA ? (existingA.getAttribute("href") || "") : "";
-          openLinkPicker(existing, function (href) { setImageLink(imgEl, href); markDirty(); });
-        }));
+    }
+    if (vid) {
+      tb.appendChild(tbBtn(media.paused ? "▶ Play" : "❚❚ Pause", "Preview the video", function (b) {
+        if (media.paused) media.play(); else media.pause();
+        setTimeout(function () { b.innerHTML = media.paused ? "▶ Play" : "❚❚ Pause"; }, 50);
+      }));
+      var auto = media.hasAttribute("autoplay");
+      tb.appendChild(tbBtn(auto ? "Autoplay ✓" : "Autoplay", "Plays silently on a loop with no controls, like a moving photo", function () {
+        if (media.hasAttribute("autoplay")) {
+          ["autoplay", "muted", "loop"].forEach(function (k) { media.removeAttribute(k); });
+          media.setAttribute("controls", "");
+          media.muted = false;
+          media.pause();
+        } else {
+          media.setAttribute("autoplay", "");
+          media.setAttribute("muted", "");
+          media.setAttribute("loop", "");
+          media.removeAttribute("controls");
+          media.muted = true;
+          media.play();
+        }
+        markDirty();
+        buildToolbar(wrap, opts);
+      }));
+    }
+    if (opts.allowResize) {
+      tb.appendChild(tbSep());
+      var cur = alignOf(wrap);
+      ["left", "center", "right"].forEach(function (al) {
+        tb.appendChild(tbBtn(ICON[al], "Align " + al, function () {
+          setAlign(wrap, al);
+          markDirty();
+          buildToolbar(wrap, opts);
+          positionFrame(wrap);
+        }, cur === al ? "active" : ""));
+      });
+      tb.appendChild(tbBtn("Full width", "Make it as wide as the page column", function () {
+        wrap.style.width = "";
+        wrap.style.marginLeft = "";
+        wrap.style.marginRight = "";
+        wrap.classList.remove("editor-sized");
+        markDirty();
+        positionFrame(wrap);
+        buildToolbar(wrap, opts);
+      }));
+    }
+    if (opts.allowFree) {
+      tb.appendChild(tbBtn(free ? "Back in line" : "Free position",
+        free ? "Put it back between the page's text and sections" : "Place it anywhere, on top of other things",
+        function () { toggleFree(wrap, opts); }));
+    }
+    if (opts.allowBackground && !vid) {
+      tb.appendChild(tbBtn("Background", "Use as the page's background", function () {
+        deselect();
+        convertToBackground(wrap, media);
+      }));
+    }
+    if (opts.allowDelete !== false) {
+      tb.appendChild(tbSep());
+      tb.appendChild(tbBtn(ICON.trash, "Delete (or press Delete)", function () { removeWrap(wrap); }, "danger"));
+    }
+  }
+
+  function replaceMedia(wrap, file, opts) {
+    var media = mediaOf(wrap);
+    var ph = makePlaceholder(file);
+    wrap.appendChild(ph);
+    uploadWithProgress(file, ph.setProgress).then(function (path) {
+      ph.remove();
+      var next = createMediaEl(path, file);
+      if (next.tagName === media.tagName) {
+        media.setAttribute("src", path);
+        if (isVideo(media)) media.load();
+      } else {
+        if (media.getAttribute("alt") && next.tagName === "IMG") next.setAttribute("alt", media.getAttribute("alt"));
+        media.replaceWith(next);
       }
-      if (opts.allowSize !== false) {
-        [["S", "33%"], ["M", "50%"], ["L", "75%"], ["Full", "100%"]].forEach(function (pair) {
-          var b = makeBtn(pair[0], function () {
-            wrap.style.width = pair[1];
-            markDirty();
+      markDirty();
+      buildToolbar(wrap, opts);
+      positionFrame(wrap);
+    }).catch(function (err) { ph.remove(); alert("Upload failed: " + err.message); });
+  }
+
+  // ---- free position (on top of the page, anywhere)
+  function toggleFree(wrap, opts) {
+    var holder = wrap.parentElement;
+    if (wrap.dataset.editorFree !== "true") {
+      var canvas = getFreeCanvas();
+      var media = mediaOf(wrap);
+      var r = media.getBoundingClientRect();
+      var pos = pageRelativeCoords(r.left, r.top);
+      canvas.appendChild(wrap);
+      cleanupEmptyHolder(holder);
+      removeBlockHandle(wrap);
+      wrap.style.position = "absolute";
+      wrap.style.left = Math.max(0, pos.x) + "px";
+      wrap.style.top = Math.max(0, pos.y) + "px";
+      wrap.style.width = Math.round(r.width) + "px";
+      wrap.style.marginLeft = "";
+      wrap.style.marginRight = "";
+      wrap.style.zIndex = String(nextZIndex());
+      wrap.classList.add("editor-sized");
+      wrap.dataset.editorFree = "true";
+    } else {
+      ["position", "left", "top", "zIndex"].forEach(function (k) { wrap.style[k] = ""; });
+      var pw = getPageContent().getBoundingClientRect().width;
+      wrap.style.width = Math.min(100, Math.round(wrap.getBoundingClientRect().width / pw * 1000) / 10) + "%";
+      setAlign(wrap, "center");
+      delete wrap.dataset.editorFree;
+      placeAtTopLevel(wrap, nearestTopBlock(wrap.getBoundingClientRect().top), "after");
+    }
+    markDirty();
+    buildToolbar(wrap, opts);
+    positionFrame(wrap);
+  }
+
+  // ---- resize by dragging a corner
+  function contentWidth(el) {
+    var cs = window.getComputedStyle(el);
+    return el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  }
+  function startResize(e, wrap, corner) {
+    e.preventDefault();
+    e.stopPropagation();
+    var media = mediaOf(wrap);
+    var free = wrap.dataset.editorFree === "true";
+    var parentW = contentWidth(wrap.parentElement) || 1;
+    var startW = media.getBoundingClientRect().width;
+    var startLeft = parseFloat(wrap.style.left) || 0;
+    var startX = e.clientX;
+    var east = corner.indexOf("e") !== -1;
+    var align = alignOf(wrap);
+    if (!free && align === "none") { setAlign(wrap, "center"); align = "center"; }
+    // a centered photo grows on both sides, so each pixel of mouse movement counts twice
+    var factor = !free && align === "center" ? 2 : 1;
+    var badge = document.createElement("div");
+    badge.className = "editor-size-badge editor-ui";
+    wrap.querySelector(":scope > .editor-media-frame").appendChild(badge);
+    wrap.classList.add("editor-sized", "editor-resizing");
+    function onMove(ev) {
+      var dx = (ev.clientX - startX) * (east ? 1 : -1);
+      var w = Math.max(60, Math.min(parentW, startW + dx * factor));
+      if (free) {
+        wrap.style.width = Math.round(w) + "px";
+        if (!east) wrap.style.left = Math.round(startLeft + (startW - w)) + "px";
+        badge.textContent = Math.round(w) + " px";
+      } else {
+        var pct = Math.round(w / parentW * 1000) / 10;
+        wrap.style.width = pct + "%";
+        badge.textContent = Math.round(pct) + "%";
+      }
+      positionFrame(wrap);
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      badge.remove();
+      wrap.classList.remove("editor-resizing");
+      markDirty();
+      positionFrame(wrap);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  // ---- drag to move
+  var dropLine = document.createElement("div");
+  dropLine.className = "editor-drop-line editor-ui";
+  document.body.appendChild(dropLine);
+
+  function topBlocks() {
+    var pc = getPageContent();
+    return Array.prototype.filter.call(pc.children, function (el) {
+      return !el.classList.contains("free-canvas") && !el.classList.contains("editor-ui");
+    });
+  }
+  function nearestTopBlock(y) {
+    var best = null, bestD = Infinity;
+    topBlocks().forEach(function (el) {
+      var r = el.getBoundingClientRect();
+      var d = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+      if (d < bestD) { bestD = d; best = el; }
+    });
+    return best;
+  }
+  // where would a drop at (x, y) go? Between paragraphs inside text, or
+  // between the page's sections.
+  function dropTargetAt(x, y, dragging) {
+    var unit = moveUnit(dragging);
+    var candidates = [];
+    topBlocks().forEach(function (block) {
+      if (block === unit) return;
+      var r = block.getBoundingClientRect();
+      if (y >= r.top && y <= r.bottom) {
+        // text can be nested (a section holding a poem holding lines): offer
+        // the innermost paragraphs/lines, not the boxes that contain them
+        block.querySelectorAll(".editor-text-flow").forEach(function (flow) {
+          Array.prototype.forEach.call(flow.children, function (child) {
+            if (child === dragging || (child.classList && child.classList.contains("editor-ui"))) return;
+            if (child.querySelector(".editor-text-flow")) return;
+            candidates.push({ el: child, flow: flow });
           });
-          b.classList.add("editor-size-btn");
-          toolbar.appendChild(b);
         });
       }
-      if (opts.allowBackground) {
-        toolbar.appendChild(makeBtn("Background", function () { convertToBackground(wrap, imgEl); }));
-      }
-      if (opts.allowFreePosition !== false) {
-        toolbar.appendChild(makeBtn(isFree ? "Return to flow" : "Free position", toggleFree));
-      }
-      if (opts.allowDelete !== false) {
-        toolbar.appendChild(makeBtn("Delete", function () { wrap.remove(); markDirty(); }, true));
-      }
+      candidates.push({ el: block, flow: null });
+    });
+    var best = null, bestD = Infinity;
+    candidates.forEach(function (c) {
+      var r = c.el.getBoundingClientRect();
+      if (!r.height) return;
+      var inside = y >= r.top && y <= r.bottom;
+      var d = inside ? 0 : Math.min(Math.abs(y - r.top), Math.abs(y - r.bottom));
+      // inside a text block, prefer its paragraphs over the whole block
+      if (d < bestD || (d === bestD && c.flow)) { bestD = d; best = c; }
+    });
+    if (!best) return null;
+    var br = best.el.getBoundingClientRect();
+    return { el: best.el, flow: best.flow, where: y < br.top + br.height / 2 ? "before" : "after", rect: br };
+  }
+  function moveUnit(wrap) {
+    var p = wrap.parentElement;
+    if (p && p.classList.contains("project-media") && p.parentElement === getPageContent()) {
+      var others = Array.prototype.filter.call(p.childNodes, function (n) {
+        if (n === wrap) return false;
+        if (n.nodeType === 3) return n.textContent.trim();
+        return !(n.classList && n.classList.contains("editor-ui"));
+      });
+      if (!others.length) return p;
     }
+    return wrap;
+  }
+  function removeBlockHandle(el) {
+    var h = el.querySelector(":scope > .editor-block-bar");
+    if (h) h.remove();
+    delete el.dataset.editorBlockHandle;
+  }
+  function placeAtTopLevel(wrap, refEl, where) {
+    var unit = moveUnit(wrap);
+    var oldHolder = wrap.parentElement;
+    if (unit === wrap) {
+      unit = document.createElement("div");
+      unit.className = "project-media container";
+      unit.appendChild(wrap);
+    }
+    var pc = getPageContent();
+    if (refEl) pc.insertBefore(unit, where === "before" ? refEl : refEl.nextSibling);
+    else {
+      var canvas = pc.querySelector(":scope > .free-canvas");
+      pc.insertBefore(unit, canvas);
+    }
+    if (oldHolder !== unit) cleanupEmptyHolder(oldHolder);
+    addBlockHandle(unit);
+  }
+  function placeInFlow(wrap, refEl, where) {
+    var oldHolder = wrap.parentElement;
+    refEl.parentNode.insertBefore(wrap, where === "before" ? refEl : refEl.nextSibling);
+    if (oldHolder !== wrap.parentElement) cleanupEmptyHolder(oldHolder);
+  }
 
-    function toggleFree() {
-      if (!isFree) {
-        var canvas = getFreeCanvas();
-        var rect = wrap.getBoundingClientRect();
-        var pos = pageRelativeCoords(rect.left, rect.top);
-        var width = rect.width;
-        canvas.appendChild(wrap);
-        wrap.style.position = "absolute";
-        wrap.style.left = Math.max(0, pos.x) + "px";
-        wrap.style.top = Math.max(0, pos.y) + "px";
-        wrap.style.width = Math.round(width) + "px";
-        wrap.style.zIndex = String(nextZIndex());
-        dragHandle = makeDragHandle();
-        wrap.appendChild(dragHandle);
-        makeFreeDraggable(wrap, dragHandle);
-        isFree = true;
-      } else {
-        var pc = getPageContent();
-        var canvas2 = pc.querySelector(":scope > .free-canvas");
-        wrap.style.position = "";
-        wrap.style.left = "";
-        wrap.style.top = "";
-        wrap.style.zIndex = "";
-        if (dragHandle) { dragHandle.remove(); dragHandle = null; }
-        if (canvas2) pc.insertBefore(wrap, canvas2); else pc.appendChild(wrap);
-        addBlockHandle(wrap);
-        isFree = false;
+  function startMove(e, wrap) {
+    if (e.button !== 0) return;
+    var startX = e.clientX, startY = e.clientY;
+    var free = wrap.dataset.editorFree === "true";
+    var moving = false;
+    var target = null;
+    var startLeft = parseFloat(wrap.style.left) || 0, startTop = parseFloat(wrap.style.top) || 0;
+    e.preventDefault();
+    function onMove(ev) {
+      var dx = ev.clientX - startX, dy = ev.clientY - startY;
+      if (!moving && Math.abs(dx) + Math.abs(dy) < 6) return;
+      if (!moving) {
+        moving = true;
+        selectWrap(wrap);
+        wrap.classList.add("editor-dragging");
+        if (free) wrap.style.zIndex = String(nextZIndex());
       }
-      renderToolbar();
+      if (free) {
+        wrap.style.left = Math.max(0, startLeft + dx) + "px";
+        wrap.style.top = Math.max(0, startTop + dy) + "px";
+        positionFrame(wrap);
+        return;
+      }
+      target = dropTargetAt(ev.clientX, ev.clientY, wrap);
+      if (!target) { dropLine.style.display = "none"; return; }
+      var r = target.rect;
+      dropLine.style.display = "block";
+      dropLine.style.left = r.left + "px";
+      dropLine.style.width = r.width + "px";
+      dropLine.style.top = (target.where === "before" ? r.top - 3 : r.bottom + 1) + "px";
+      // scroll when dragging near the top/bottom edge
+      if (ev.clientY < 60) window.scrollBy(0, -12);
+      else if (ev.clientY > window.innerHeight - 60) window.scrollBy(0, 12);
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      dropLine.style.display = "none";
+      wrap.classList.remove("editor-dragging");
+      if (!moving) return;
+      if (!free && target) {
+        if (target.flow) {
+          removeBlockHandle(wrap);
+          placeInFlow(wrap, target.el, target.where);
+        } else {
+          placeAtTopLevel(wrap, target.el, target.where);
+        }
+      }
       markDirty();
+      positionAllFrames();
+      selectWrap(wrap);
     }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
 
-    renderToolbar();
+  // ---- wrapping a photo/video so it can be edited
+  function makeWrap(target) {
+    var wrap = document.createElement("div");
+    wrap.className = "editor-img-wrap";
+    wrap.contentEditable = "false";
+    target.parentNode.insertBefore(wrap, target);
+    wrap.appendChild(target);
+    var frame = document.createElement("div");
+    frame.className = "editor-media-frame editor-ui";
+    var tb = document.createElement("div");
+    tb.className = "editor-media-toolbar";
+    tb.addEventListener("mousedown", function (e) { e.stopPropagation(); });
+    frame.appendChild(tb);
+    wrap.appendChild(frame);
     return wrap;
   }
 
-  function setupStandaloneImage(img, opts) {
-    if (img.closest(".editor-img-wrap")) return;
-    if (img.dataset.editorSetup) return;
-    img.dataset.editorSetup = "true";
-    setupImageBlock(img, opts);
+  // opts: allowResize, allowMove, allowFree, allowLink, allowDelete, allowBackground
+  function setupMediaBlock(mediaEl, opts) {
+    opts = opts || {};
+    if (mediaEl.closest(".editor-img-wrap")) return mediaEl.closest(".editor-img-wrap");
+    noNativeDrag(mediaEl);
+    var a = mediaEl.parentElement && mediaEl.parentElement.tagName === "A" && mediaEl.parentElement.children.length === 1
+      ? mediaEl.parentElement : null;
+    var target = a || mediaEl;
+
+    // sizing/placement saved on the photo itself moves onto the wrapper while editing
+    var wrapStyles = {};
+    MEDIA_STYLE_PROPS.forEach(function (k) {
+      if (target.style[k]) { wrapStyles[k] = target.style[k]; target.style[k] = ""; }
+    });
+    if (target !== mediaEl) {
+      MEDIA_STYLE_PROPS.forEach(function (k) {
+        if (mediaEl.style[k] && !wrapStyles[k]) { wrapStyles[k] = mediaEl.style[k]; mediaEl.style[k] = ""; }
+      });
+    }
+    // "margin: 0 auto" on the photo itself
+    var wasFree = wrapStyles.position === "absolute";
+
+    var wrap = makeWrap(target);
+    Object.keys(wrapStyles).forEach(function (k) { wrap.style[k] = wrapStyles[k]; });
+    if (wrap.style.width) wrap.classList.add("editor-sized");
+    if (wasFree || target.closest(".free-canvas")) {
+      wrap.dataset.editorFree = "true";
+      if (!wrap.style.position) wrap.style.position = "absolute";
+    }
+    if (opts.allowDelete !== false) wrap.dataset.editorDeletable = "true";
+
+    if (opts.allowResize) {
+      var frame = wrap.querySelector(":scope > .editor-media-frame");
+      ["nw", "ne", "sw", "se"].forEach(function (c) {
+        var h = document.createElement("div");
+        h.className = "editor-media-handle editor-media-handle-" + c;
+        h.title = "Drag to resize";
+        h.addEventListener("mousedown", function (e) { startResize(e, wrap, c); });
+        frame.appendChild(h);
+      });
+    }
+    if (opts.allowMove) {
+      wrap.classList.add("editor-movable");
+      wrap.addEventListener("mousedown", function (e) {
+        if (e.target.closest(".editor-ui")) return;
+        startMove(e, wrap);
+      });
+    }
+    buildToolbar(wrap, opts);
+    requestAnimationFrame(function () { positionFrame(wrap); });
+    return wrap;
+  }
+
+  var STANDALONE = { allowResize: true, allowMove: true, allowFree: true, allowLink: true, allowDelete: true, allowBackground: true };
+
+  // older code paths (background image mode) still call these names
+  function setupImageBlock(imgEl, opts) {
+    return setupMediaBlock(imgEl, Object.assign({}, STANDALONE, opts && {
+      allowDelete: opts.allowDelete !== false,
+      allowLink: opts.allowLink !== false,
+      allowBackground: !!opts.allowBackground,
+    }));
+  }
+  function setupStandaloneImage(img, opts) { return setupImageBlock(img, opts); }
+
+  // ---- photos inside galleries/carousels: select, replace, crop, link,
+  // delete; drag to reorder (Sortable); size comes from the gallery layout
+  function wrapGalleryItem(item, imgEl, opts) {
+    noNativeDrag(imgEl);
+    var wrap = makeWrap(item);
+    wrap.classList.add("editor-gallery-item");
+    if (opts.allowDelete) wrap.dataset.editorDeletable = "true";
+    buildToolbar(wrap, { allowLink: !!opts.allowLink, allowDelete: !!opts.allowDelete });
+    return wrap;
   }
 
   // ---------------------------------------------------------------- gallery setup
@@ -640,10 +1172,9 @@
     el.appendChild(toggleBtn);
   }
 
-  // Inserts a freshly-uploaded image right at the current text cursor
-  // position within `flow` -- this is the "+ Image while writing" move.
-  // Falls back to the end of the passage if the cursor isn't in this flow.
-  function insertImageAtCursor(flow) {
+  // Inserts uploaded photos/videos right at the text cursor in `flow`
+  // (falls back to the end of the passage if the cursor isn't in it).
+  function insertMediaAtCursor(flow) {
     var sel = document.getSelection();
     var refNode = null;
     if (sel.rangeCount && flow.contains(sel.anchorNode)) {
@@ -651,19 +1182,20 @@
       while (node && node.parentElement !== flow) node = node.parentElement;
       refNode = node;
     }
-    pickAndUpload(function (path) {
-      var img = document.createElement("img");
-      img.src = path;
-      img.loading = "lazy";
-      img.alt = "";
-      img.style.width = "100%";
-      if (refNode) flow.insertBefore(img, refNode.nextSibling);
-      else flow.appendChild(img);
-      setupStandaloneImage(img, {
-        allowDelete: true, allowLink: true, allowSize: true,
-        allowBackground: false, allowFreePosition: true,
+    pickFiles("image/*,video/*", true, function (files) {
+      var after = refNode;
+      files.forEach(function (file) {
+        var ph = makePlaceholder(file);
+        flow.insertBefore(ph, after ? after.nextSibling : null);
+        after = ph;
+        uploadWithProgress(file, ph.setProgress).then(function (path) {
+          var el = createMediaEl(path, file);
+          ph.replaceWith(el);
+          var wrap = setupMediaBlock(el, STANDALONE);
+          markDirty();
+          selectWrap(wrap);
+        }).catch(function (err) { ph.remove(); alert("Upload failed: " + err.message); });
       });
-      markDirty();
     });
   }
 
@@ -689,9 +1221,10 @@
     flow.setAttribute("contenteditable", "true");
     flow.addEventListener("input", markDirty);
 
-    var insertBtn = makeBtn("+ Image", function () {
-      insertImageAtCursor(flow);
+    var insertBtn = makeBtn("+ Media", function () {
+      insertMediaAtCursor(flow);
     });
+    insertBtn.title = "Add a photo or video where your cursor is";
     insertBtn.className += " editor-inline-insert-btn editor-ui";
     insertBtn.addEventListener("mousedown", function (e) { e.preventDefault(); });
     container.appendChild(insertBtn);
@@ -1070,11 +1603,35 @@
       block.style.position = "relative";
       block.dataset.editorPosAdded = "true"; // editor-only; removed again on save
     }
+    // hover bar: drag tab + delete button
+    var bar = document.createElement("div");
+    bar.className = "editor-block-bar editor-ui";
+    bar.contentEditable = "false";
     var handle = document.createElement("div");
-    handle.className = "editor-block-handle editor-ui";
+    handle.className = "editor-block-handle";
     handle.title = "Drag to move this whole section up or down";
     handle.textContent = "☰ move section";
-    block.insertBefore(handle, block.firstChild);
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "editor-block-delete";
+    del.title = "Delete this section";
+    del.innerHTML = "<svg width='12' height='12' viewBox='0 0 14 14'><path d='M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.6 8.5h5.8l.6-8.5' fill='none' stroke='currentColor' stroke-width='1.4' stroke-linejoin='round'/></svg> Delete";
+    del.addEventListener("mousedown", function (e) { e.preventDefault(); e.stopPropagation(); });
+    del.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      deleteBlock(block);
+    });
+    bar.appendChild(handle);
+    bar.appendChild(del);
+    block.insertBefore(bar, block.firstChild);
+  }
+
+  function deleteBlock(block) {
+    if (selectedWrap && block.contains(selectedWrap)) deselect();
+    block.remove();
+    markDirty();
+    if (window.__editorOnNotice) window.__editorOnNotice("Section deleted", true);
   }
 
   function setupContentFlow() {
@@ -1106,8 +1663,12 @@
   function appendBlock(el) {
     var pc = getPageContent();
     if (!pc) return;
-    var canvas = pc.querySelector(":scope > .free-canvas");
-    if (canvas) pc.insertBefore(el, canvas); else pc.appendChild(el);
+    var ref = nearestTopBlock(window.innerHeight / 2);
+    if (ref) pc.insertBefore(el, ref.nextSibling);
+    else {
+      var canvas = pc.querySelector(":scope > .free-canvas");
+      if (canvas) pc.insertBefore(el, canvas); else pc.appendChild(el);
+    }
     return el;
   }
 
@@ -1127,38 +1688,57 @@
     p.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  function insertImageBlock() {
-    var placeholder = document.createElement("div");
-    placeholder.className = "editor-img-wrap container";
-
-    var inner = document.createElement("div");
-    inner.className = "free-img-placeholder-inner editor-ui";
-    inner.textContent = "+ Click to upload image";
-    placeholder.appendChild(inner);
-
-    inner.addEventListener("click", function () {
-      pickAndUpload(function (path) {
-        var img = document.createElement("img");
-        img.src = path;
-        img.loading = "lazy";
-        img.alt = "";
-        img.style.width = "100%";
-        placeholder.replaceWith(img);
-        setupStandaloneImage(img, {
-          allowDelete: true, allowLink: true, allowSize: true,
-          allowBackground: true, allowFreePosition: true,
+  function insertMediaBlock() {
+    pickFiles("image/*,video/*", true, function (files) {
+      var photos = files.filter(function (f) { return !/^video\//.test(f.type); });
+      var videos = files.filter(function (f) { return /^video\//.test(f.type); });
+      var lastBlock = null;
+      function addBlock(block) {
+        if (lastBlock) lastBlock.parentNode.insertBefore(block, lastBlock.nextSibling);
+        else appendBlock(block);
+        addBlockHandle(block);
+        lastBlock = block;
+        block.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      if (photos.length > 1) {
+        var outer = document.createElement("div");
+        outer.className = "container";
+        var grid = document.createElement("div");
+        grid.className = "gallery-grid";
+        outer.appendChild(grid);
+        addBlock(outer);
+        var pending = photos.length;
+        photos.forEach(function (file) {
+          var ph = makePlaceholder(file);
+          grid.appendChild(ph);
+          uploadWithProgress(file, ph.setProgress).then(function (path) {
+            ph.replaceWith(createMediaEl(path, file));
+          }).catch(function (err) { ph.remove(); alert("Upload failed: " + err.message); })
+            .then(function () {
+              if (--pending) return;
+              if (!grid.querySelector("img")) { outer.remove(); return; }
+              setupGallery(grid, { allowDelete: true, allowLink: true });
+              markDirty();
+            });
         });
-        var wrap = img.closest(".editor-img-wrap");
-        addBlockHandle(wrap);
-        markDirty();
-        wrap.scrollIntoView({ behavior: "smooth", block: "center" });
+      } else {
+        videos = files;
+      }
+      videos.forEach(function (file) {
+        var block = document.createElement("div");
+        block.className = "project-media container";
+        var ph = makePlaceholder(file);
+        block.appendChild(ph);
+        addBlock(block);
+        uploadWithProgress(file, ph.setProgress).then(function (path) {
+          var el = createMediaEl(path, file);
+          ph.replaceWith(el);
+          var wrap = setupMediaBlock(el, STANDALONE);
+          markDirty();
+          selectWrap(wrap);
+        }).catch(function (err) { block.remove(); alert("Upload failed: " + err.message); });
       });
     });
-
-    appendBlock(placeholder);
-    addBlockHandle(placeholder);
-    markDirty();
-    placeholder.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   // ---------------------------------------------------------------- mailing list block
@@ -1236,7 +1816,8 @@
 
   window.__editorTools = {
     addTextBox: insertTextBlock,
-    addImage: insertImageBlock,
+    addMedia: insertMediaBlock,
+    addImage: insertMediaBlock,
     addMailingList: insertMailingListBlock,
   };
 
@@ -1252,16 +1833,14 @@
     setupGallery(c, { allowDelete: true, allowLink: true });
   });
   document.querySelectorAll(".hero > img").forEach(function (img) {
-    setupStandaloneImage(img, {
-      allowDelete: false, allowLink: true, allowSize: true,
-      allowBackground: false, allowFreePosition: false,
-    });
+    setupMediaBlock(img, { allowLink: true, allowDelete: false });
   });
-  document.querySelectorAll(".project-media > img").forEach(function (img) {
-    setupStandaloneImage(img, {
-      allowDelete: true, allowLink: true, allowSize: true,
-      allowBackground: true, allowFreePosition: true,
-    });
+  var GALLERY_SEL = GRID_GALLERY_SELECTORS.concat(LINK_GALLERY_SELECTORS, ROW_SELECTORS).join(",");
+  document.querySelectorAll(".page-content img, .page-content video").forEach(function (m) {
+    if (m.closest(".editor-img-wrap, .editor-ui, .lightbox-overlay, .hero")) return;
+    if (m.closest(GALLERY_SEL)) return;
+    if (m.classList.contains("editor-bg-image")) return;
+    setupMediaBlock(m, STANDALONE);
   });
   setupContentFlow();
   document.querySelectorAll(".free-mailing-list").forEach(function (wrap) {
@@ -1283,14 +1862,29 @@
     clone.querySelectorAll(".editor-ui").forEach(function (el) { el.remove(); });
 
     clone.querySelectorAll(".editor-img-wrap").forEach(function (wrap) {
-      var child = wrap.querySelector(":scope > img, :scope > a");
+      // put back everything the wrapper holds (a photo, a link, or a whole
+      // <figure> with its caption) -- never drop content
+      var kids = Array.prototype.filter.call(wrap.childNodes, function (n) {
+        return !(n.nodeType === 1 && n.classList.contains("editor-ui"));
+      });
+      var child = kids.filter(function (n) { return n.nodeType === 1; })[0];
       if (child) {
-        ["position", "left", "top", "width", "zIndex"].forEach(function (prop) {
+        var sized = !!wrap.style.width;
+        MEDIA_STYLE_PROPS.forEach(function (prop) {
           if (wrap.style[prop]) child.style[prop] = wrap.style[prop];
         });
-        wrap.parentNode.insertBefore(child, wrap);
+        // auto margins (centered/right-aligned) only work on a block
+        if (wrap.style.marginLeft === "auto" || wrap.style.marginRight === "auto") child.style.display = "block";
+        if (child.tagName === "A") {
+          var inner = child.querySelector("img, video");
+          if (inner && sized) inner.style.width = "100%";
+        }
       }
+      kids.forEach(function (n) { wrap.parentNode.insertBefore(n, wrap); });
       wrap.remove();
+    });
+    clone.querySelectorAll("video").forEach(function (v) {
+      v.removeAttribute("data-editor-paused");
     });
 
     // unwrap the inner continuous-editing region, pushing its contents
@@ -1308,7 +1902,7 @@
     clone.querySelectorAll(".lightbox-overlay").forEach(function (el) { el.remove(); });
 
     // strip main.js runtime carousel artifacts so they don't accumulate across saves
-    clone.querySelectorAll(".carousel-nav").forEach(function (el) { el.remove(); });
+    clone.querySelectorAll(".carousel-nav, .carousel-count").forEach(function (el) { el.remove(); });
     clone.querySelectorAll(".carousel-track").forEach(function (track) {
       while (track.firstChild) track.parentNode.insertBefore(track.firstChild, track);
       track.remove();
@@ -1321,7 +1915,10 @@
       if (el.style.position === "relative") el.style.position = "";
       if (!el.getAttribute("style")) el.removeAttribute("style");
     });
-    clone.querySelectorAll('img[draggable="false"]').forEach(function (el) { el.removeAttribute("draggable"); });
+    clone.querySelectorAll("[data-editor-undrag]").forEach(function (el) {
+      el.removeAttribute("draggable");
+      el.removeAttribute("data-editor-undrag");
+    });
 
     clone.querySelectorAll("[contenteditable]").forEach(function (el) {
       el.removeAttribute("contenteditable");

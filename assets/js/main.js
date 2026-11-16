@@ -72,7 +72,9 @@ function initCarousels() {
       var gap = parseFloat(getComputedStyle(track).gap) || 0;
       var step = slides[0].getBoundingClientRect().width + gap;
       track.style.transform = "translateX(-" + (index * step) + "px)";
+      if (count) count.textContent = (index + 1) + " / " + slides.length;
     }
+    var count = null;
 
     slides.forEach(function (slide) {
       slide.addEventListener("click", function () {
@@ -101,8 +103,24 @@ function initCarousels() {
       update();
     });
 
+    var count = document.createElement("div");
+    count.className = "carousel-count";
+
+    // swipe left/right on phones
+    var touchX = null;
+    container.addEventListener("touchstart", function (e) { touchX = e.touches[0].clientX; }, { passive: true });
+    container.addEventListener("touchend", function (e) {
+      if (touchX === null) return;
+      var dx = e.changedTouches[0].clientX - touchX;
+      touchX = null;
+      if (Math.abs(dx) < 40) return;
+      index = dx < 0 ? (index + 1) % slides.length : (index - 1 + slides.length) % slides.length;
+      update();
+    });
+
     container.appendChild(prev);
     container.appendChild(next);
+    container.appendChild(count);
     window.addEventListener("resize", update);
     update();
   });
