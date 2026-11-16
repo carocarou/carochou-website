@@ -442,6 +442,17 @@ app.post("/__editor__/api/publish", (req, res) => {
       });
     };
     commitStep(() => {
+      // bring in anything changed on github.com first (e.g. GitHub Pages
+      // settings rewriting CNAME) so the push isn't rejected
+      git(["pull", "--rebase", "--autostash"], (errP, oP, eP) => {
+        if (errP) {
+          git(["rebase", "--abort"], () => done(500, {
+            error: "Your changes are saved on this computer, but GitHub has different edits to the same lines, " +
+              "so they couldn't be combined automatically. Nothing went live yet.\n\n" + (eP || oP || errP.message),
+            committed: true,
+          }));
+          return;
+        }
         git(["push"], (err3, o3, e3) => {
           if (err3) {
             return done(500, {
@@ -452,6 +463,7 @@ app.post("/__editor__/api/publish", (req, res) => {
           }
           done(200, { ok: true, published: files.length });
         });
+      });
     });
   });
 });
