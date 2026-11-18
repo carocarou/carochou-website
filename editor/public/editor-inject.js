@@ -1117,61 +1117,6 @@
     return true;
   }
 
-  // Explicit, click-triggered promote/return for a text element -- same idea
-  // as the image toggle. Adds a small margin control (⛶ / ↩) rather than
-  // relying on drag gestures, so it can never trigger by accident.
-  function addTextFreeToggle(el) {
-    var isFree = false;
-    var dragHandle = null;
-    var toggleBtn = document.createElement("button");
-    toggleBtn.type = "button";
-    toggleBtn.className = "editor-text-toggle editor-ui";
-    toggleBtn.title = "Free position (place anywhere on the page)";
-    toggleBtn.textContent = "⛶";
-
-    toggleBtn.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!isFree) {
-        var canvas = getFreeCanvas();
-        var rect = el.getBoundingClientRect();
-        var pos = pageRelativeCoords(rect.left, rect.top);
-        var width = rect.width;
-        canvas.appendChild(el);
-        el.style.position = "absolute";
-        el.style.left = Math.max(0, pos.x) + "px";
-        el.style.top = Math.max(0, pos.y) + "px";
-        el.style.width = Math.round(width) + "px";
-        el.style.zIndex = String(nextZIndex());
-        el.classList.add("free-textbox");
-        dragHandle = makeDragHandle();
-        el.appendChild(dragHandle);
-        makeFreeDraggable(el, dragHandle);
-        toggleBtn.title = "Return to normal text flow";
-        toggleBtn.textContent = "↩";
-        isFree = true;
-      } else {
-        var pc = getPageContent();
-        var canvas2 = pc.querySelector(":scope > .free-canvas");
-        el.style.position = "";
-        el.style.left = "";
-        el.style.top = "";
-        el.style.zIndex = "";
-        el.classList.remove("free-textbox");
-        if (dragHandle) { dragHandle.remove(); dragHandle = null; }
-        if (canvas2) pc.insertBefore(el, canvas2); else pc.appendChild(el);
-        addBlockHandle(el);
-        toggleBtn.title = "Free position (place anywhere on the page)";
-        toggleBtn.textContent = "⛶";
-        isFree = false;
-      }
-      el.appendChild(toggleBtn);
-      markDirty();
-    });
-
-    el.appendChild(toggleBtn);
-  }
-
   // Inserts uploaded photos/videos right at the text cursor in `flow`
   // (falls back to the end of the passage if the cursor isn't in it).
   function insertMediaAtCursor(flow) {
@@ -1315,7 +1260,6 @@
     el.dataset.editorTextSetup = "true";
     el.setAttribute("contenteditable", "true");
     el.addEventListener("input", markDirty);
-    addTextFreeToggle(el);
   }
 
   function setupTextEditing() {
@@ -2320,7 +2264,6 @@
     p.setAttribute("contenteditable", "true");
     p.dataset.editorTextSetup = "true";
     p.addEventListener("input", markDirty);
-    addTextFreeToggle(p);
     appendBlock(p);
     addBlockHandle(p);
     markDirty();
