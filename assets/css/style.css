@@ -505,7 +505,8 @@ p { margin: 0 0 1em; }
 }
 
 /* lightbox: click any in-page photo (that isn't itself a link) to view full size */
-.page-content img:not(a img):not([data-layout="carousel"] img) { cursor: zoom-in; }
+/* photos that open larger on click show a hand; ones with data-no-zoom keep the normal arrow */
+.page-content img:not(a img):not([data-layout="carousel"] img):not([data-no-zoom]) { cursor: pointer; }
 .lightbox-overlay {
   display: none;
   position: fixed;

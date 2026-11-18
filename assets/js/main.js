@@ -44,6 +44,7 @@ function initLightbox() {
     if (!target.closest(".page-content")) return;
     if (target.closest("a")) return;
     if (target.closest('[data-layout="carousel"]')) return;
+    if (target.hasAttribute("data-no-zoom")) return; // turned off in the editor ("Click to enlarge")
     img.src = target.currentSrc || target.src;
     img.alt = target.alt || "";
     overlay.classList.add("open");

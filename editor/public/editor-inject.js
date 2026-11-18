@@ -192,19 +192,32 @@
       var scaleY = pic.naturalHeight / stage.clientHeight;
       var sx = box.x * scaleX, sy = box.y * scaleY;
       var sw = box.w * scaleX, sh = box.h * scaleY;
+      // web-sized output: at most 2400px on the long side (sharp on retina
+      // screens), saved as a high-quality JPEG unless the crop has
+      // see-through areas, which only PNG keeps. A PNG of a photo is ~10x bigger.
+      var MAX_SIDE = 2400;
+      var k = Math.min(1, MAX_SIDE / Math.max(sw, sh));
       var canvas = document.createElement("canvas");
-      canvas.width = Math.round(sw);
-      canvas.height = Math.round(sh);
+      canvas.width = Math.max(1, Math.round(sw * k));
+      canvas.height = Math.max(1, Math.round(sh * k));
       var ctx = canvas.getContext("2d");
+      ctx.imageSmoothingQuality = "high";
       ctx.drawImage(pic, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      var transparent = false;
+      if (/\.(png|gif|webp)$/i.test((imgEl.src || "").split("?")[0])) {
+        var px = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        for (var i = 3; i < px.length; i += 4) { if (px[i] < 255) { transparent = true; break; } }
+      }
+      var origName = (imgEl.src.split("/").pop() || "image").split("?")[0];
+      var base = decodeURIComponent(origName).replace(/\.[^.]+$/, "").replace(/(-cropped)+(-\d+)?$/, "");
+      applyBtn.disabled = true;
+      applyBtn.textContent = "Saving…";
       canvas.toBlob(function (blob) {
-        var origName = (imgEl.src.split("/").pop() || "image").split("?")[0];
-        var base = origName.replace(/\.[^.]+$/, "");
-        uploadBlob(blob, base + "-cropped.png", function (path) {
+        uploadBlob(blob, base + "-cropped." + (transparent ? "png" : "jpg"), function (path) {
           onDone(path);
           close();
         });
-      }, "image/png");
+      }, transparent ? "image/png" : "image/jpeg", 0.88);
     });
   }
 
@@ -675,6 +688,19 @@
           markDirty();
           buildToolbar(wrap, opts);
         });
+      }));
+    }
+    // the live site opens photos larger when clicked (main.js lightbox) --
+    // except linked photos and slideshows, which do their own thing
+    if (!vid && !media.closest("a") && !media.closest('[data-layout="carousel"]')) {
+      var zoom = !media.hasAttribute("data-no-zoom");
+      tb.appendChild(tbBtn(zoom ? "Click to enlarge ✓" : "Click to enlarge",
+        zoom ? "Visitors can click this photo to see it larger. Click to turn that off"
+             : "Let visitors click this photo to see it larger", function () {
+        if (media.hasAttribute("data-no-zoom")) media.removeAttribute("data-no-zoom");
+        else media.setAttribute("data-no-zoom", "");
+        markDirty();
+        buildToolbar(wrap, opts);
       }));
     }
     if (vid) {
