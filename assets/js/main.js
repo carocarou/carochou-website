@@ -126,3 +126,12 @@ function initCarousels() {
     update();
   });
 }
+
+// Home hero fills the screen under the header: share the header's height with the CSS
+(function () {
+  var header = document.querySelector(".site-header");
+  if (!header || !document.querySelector(".hero")) return;
+  function setH() { document.documentElement.style.setProperty("--header-h", header.offsetHeight + "px"); }
+  setH();
+  window.addEventListener("resize", setH);
+})();

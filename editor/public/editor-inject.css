@@ -641,3 +641,10 @@ body.editor-text-moving, body.editor-text-moving * { cursor: grabbing !important
 .editor-gap-resizing > .editor-gap-handle span { opacity: 1; }
 .editor-gap-handle:hover span, .editor-gap-resizing > .editor-gap-handle span { background: #2f6fed; color: #fff; }
 .editor-gap-resizing { box-shadow: 0 -2px 0 #2f6fed; }
+
+/* Home hero: the photo fills the whole hero, so its editor wrapper must too */
+.hero > .editor-img-wrap { position: absolute; inset: 0; z-index: 0; }
+.hero > .editor-img-wrap.editor-hero-pan { cursor: grab; }
+body.editor-hero-panning, body.editor-hero-panning * { cursor: grabbing !important; user-select: none !important; }
+/* keep the photo's buttons clear of the section's "move section / Delete" bar */
+.hero > .editor-img-wrap .editor-media-toolbar { top: 40px; }

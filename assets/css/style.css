@@ -137,7 +137,9 @@ p { margin: 0 0 1em; }
 /* ---- Hero ---- */
 .hero {
   position: relative;
-  min-height: 100vh;
+  /* fill the screen below the header, so no white shows at the bottom */
+  min-height: calc(100vh - var(--header-h, 63px));
+  min-height: calc(100svh - var(--header-h, 63px));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -150,7 +152,8 @@ p { margin: 0 0 1em; }
   height: 100%;
   max-width: none;
   margin: 0;
-  object-fit: contain;
+  object-fit: cover;   /* fill edge to edge; drag in the editor to pick which part shows */
+  object-position: 50% 50%;
   z-index: 0;
 }
 .hero-overlay {

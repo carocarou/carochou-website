@@ -1087,6 +1087,53 @@
     return wrap;
   }
 
+
+  // Home hero photo fills the screen (cropped to fit). Drag it to choose which
+  // part shows; double-click to re-center. Saved as object-position on the photo.
+  function setupHeroPan(wrap, img) {
+    wrap.classList.add("editor-hero-pan");
+    wrap.title = "Drag to choose which part of the image shows · double-click to center";
+    function pos() {
+      var p = (img.style.objectPosition || getComputedStyle(img).objectPosition || "50% 50%").split(" ");
+      return [parseFloat(p[0]) || 50, parseFloat(p[1] === undefined ? p[0] : p[1]) || 50];
+    }
+    function setPos(x, y) {
+      img.style.objectPosition = Math.round(x * 10) / 10 + "% " + Math.round(y * 10) / 10 + "%";
+    }
+    wrap.addEventListener("mousedown", function (e) {
+      if (e.button !== 0 || e.shiftKey || e.target.closest(".editor-ui")) return;
+      if (!img.naturalWidth) return;
+      e.preventDefault();
+      var r = img.getBoundingClientRect();
+      var scale = Math.max(r.width / img.naturalWidth, r.height / img.naturalHeight);
+      var overX = img.naturalWidth * scale - r.width, overY = img.naturalHeight * scale - r.height;
+      var start = pos(), sx = e.clientX, sy = e.clientY, moved = false;
+      function mm(ev) {
+        var dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (!moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+        moved = true;
+        document.body.classList.add("editor-hero-panning");
+        var x = overX > 0.5 ? start[0] - dx / overX * 100 : start[0];
+        var y = overY > 0.5 ? start[1] - dy / overY * 100 : start[1];
+        setPos(Math.max(0, Math.min(100, x)), Math.max(0, Math.min(100, y)));
+      }
+      function mu() {
+        window.removeEventListener("mousemove", mm, true);
+        window.removeEventListener("mouseup", mu, true);
+        document.body.classList.remove("editor-hero-panning");
+        if (moved) markDirty();
+      }
+      window.addEventListener("mousemove", mm, true);
+      window.addEventListener("mouseup", mu, true);
+    });
+    wrap.addEventListener("dblclick", function (e) {
+      if (e.target.closest(".editor-ui")) return;
+      img.style.objectPosition = "";
+      if (!img.getAttribute("style")) img.removeAttribute("style");
+      markDirty();
+    });
+  }
+
   var STANDALONE = { allowResize: true, allowMove: true, allowFree: true, allowLink: true, allowDelete: true, allowBackground: true };
 
   // older code paths (background image mode) still call these names
@@ -2733,7 +2780,8 @@
     setupGallery(c, { allowDelete: true, allowLink: true });
   });
   document.querySelectorAll(".hero > img").forEach(function (img) {
-    setupMediaBlock(img, { allowLink: true, allowDelete: false });
+    var wrap = setupMediaBlock(img, { allowLink: true, allowDelete: false });
+    setupHeroPan(wrap, img);
   });
   var GALLERY_SEL = GRID_GALLERY_SELECTORS.concat(LINK_GALLERY_SELECTORS, ROW_SELECTORS).join(",");
   document.querySelectorAll(".page-content img, .page-content video").forEach(function (m) {
