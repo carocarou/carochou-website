@@ -77,15 +77,6 @@
 
 /* "+ Image" button for inserting a photo at the cursor position within a
    continuous text passage -- sits just below the passage, always reachable */
-.editor-inline-insert-btn {
-  display: block;
-  margin: 10px 0 0;
-  background: #eee;
-  color: #444;
-}
-.editor-inline-insert-btn:hover { background: #ddd; }
-.editor-inline-insert-row { display: flex; gap: 6px; margin: 10px 0 0; }
-.editor-inline-insert-row .editor-inline-insert-btn { margin: 0; }
 
 /* blank space block (editor view) */
 .space-block { outline: 1px dashed rgba(47,111,237,0.35); outline-offset: -1px; }
@@ -621,3 +612,32 @@ body.editor-text-moving, body.editor-text-moving * { cursor: grabbing !important
   color: #333;
 }
 .editor-group-pill[hidden] { display: none; }
+
+/* drag tab for the gap above a section */
+.editor-gap-handle {
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 42;
+  cursor: ns-resize;
+  user-select: none;
+  touch-action: none;
+}
+.editor-gap-handle[hidden] { display: none; }
+.editor-gap-handle span {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 9px;
+  background: #fff;
+  color: #2f6fed;
+  box-shadow: 0 0 0 1px rgba(47,111,237,0.6), 0 1px 3px rgba(0,0,0,0.12);
+  font: 11px/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.page-content > *:hover > .editor-gap-handle span,
+.editor-gap-resizing > .editor-gap-handle span { opacity: 1; }
+.editor-gap-handle:hover span, .editor-gap-resizing > .editor-gap-handle span { background: #2f6fed; color: #fff; }
+.editor-gap-resizing { box-shadow: 0 -2px 0 #2f6fed; }

@@ -1147,33 +1147,6 @@
     return true;
   }
 
-  // Inserts uploaded photos/videos right at the text cursor in `flow`
-  // (falls back to the end of the passage if the cursor isn't in it).
-  function insertMediaAtCursor(flow) {
-    var sel = document.getSelection();
-    var refNode = null;
-    if (sel.rangeCount && flow.contains(sel.anchorNode)) {
-      var node = sel.anchorNode;
-      while (node && node.parentElement !== flow) node = node.parentElement;
-      refNode = node;
-    }
-    pickFiles("image/*,video/*", true, function (files) {
-      var after = refNode;
-      files.forEach(function (file) {
-        var ph = makePlaceholder(file);
-        flow.insertBefore(ph, after ? after.nextSibling : null);
-        after = ph;
-        uploadWithProgress(file, ph.setProgress).then(function (path) {
-          var el = createMediaEl(path, file);
-          ph.replaceWith(el);
-          var wrap = setupMediaBlock(el, STANDALONE);
-          markDirty();
-          selectWrap(wrap);
-        }).catch(function (err) { ph.remove(); alert("Upload failed: " + err.message); });
-      });
-    });
-  }
-
   // Turns a prose container into ONE continuous editable passage -- like
   // typing in a real document. The actual contenteditable region is an inner
   // ".editor-text-flow" wrapper (unwrapped again on save) so the outer
@@ -1196,26 +1169,6 @@
     flow.setAttribute("contenteditable", "true");
     flow.addEventListener("input", markDirty);
 
-    var insertBtn = makeBtn("+ Media", function () {
-      insertMediaAtCursor(flow);
-    });
-    insertBtn.title = "Add a photo or video where your cursor is";
-    insertBtn.className += " editor-inline-insert-btn editor-ui";
-    insertBtn.addEventListener("mousedown", function (e) { e.preventDefault(); });
-    var spaceBtn = makeBtn("+ Blank space", function () {
-      var top = container;
-      while (top.parentElement && top.parentElement !== getPageContent()) top = top.parentElement;
-      insertSpaceBlock(top.parentElement ? top : null);
-    });
-    spaceBtn.title = "Add an adjustable blank block below this section: type in it, or leave it empty as a gap";
-    spaceBtn.className += " editor-inline-insert-btn";
-    spaceBtn.addEventListener("mousedown", function (e) { e.preventDefault(); });
-    var row = document.createElement("div");
-    row.className = "editor-inline-insert-row editor-ui";
-    row.contentEditable = "false";
-    row.appendChild(insertBtn);
-    row.appendChild(spaceBtn);
-    container.appendChild(row);
   }
 
   // ---------------------------------------------------------------- blank space block
@@ -1245,6 +1198,7 @@
     handle.appendChild(label);
     function showH() { label.textContent = "↕ " + Math.round(block.getBoundingClientRect().height) + " px"; }
     showH();
+    handle.addEventListener("mousedown", function (e) { e.preventDefault(); e.stopPropagation(); });
     handle.addEventListener("pointerdown", function (e) {
       e.preventDefault();
       e.stopPropagation();
@@ -1278,7 +1232,8 @@
     var text = document.createElement("div");
     text.className = "space-text";
     block.appendChild(text);
-    if (after) pc.insertBefore(block, after.nextSibling); else appendBlock(block);
+    if (after) { pc.insertBefore(block, after.nextSibling); requestAnimationFrame(function () { tightenGaps(block); }); }
+    else appendBlock(block);
     addBlockHandle(block);
     setupSpaceBlock(block);
     markDirty();
@@ -1647,6 +1602,190 @@
     window.addEventListener("resize", function () { if (bar.classList.contains("open")) position(); });
   }
 
+  // ---------------------------------------------------------------- room for "+ Add block"
+  // The shell's floating "+ Add block" button sits at the bottom of the
+  // preview. Give the page a little extra room at the very end (editor only,
+  // never saved) so that, scrolled to the bottom, the button's middle sits
+  // halfway between the footer's last line ("© Caroline Chou") and the end.
+  var roomStyle = document.createElement("style");
+  roomStyle.className = "editor-ui";
+  document.head.appendChild(roomStyle);
+  window.__editorSetBottomRoom = function (center) {
+    roomStyle.textContent = "";
+    var footer = document.querySelector(".site-footer");
+    var last = footer && (footer.querySelector(":scope > p:last-child") || footer.lastElementChild || footer);
+    if (!last) return;
+    var docEnd = document.documentElement.scrollHeight;
+    var below = docEnd - (last.getBoundingClientRect().bottom + window.scrollY);
+    var extra = Math.max(0, Math.round(2 * center - below));
+    roomStyle.textContent = "body { padding-bottom: " + extra + "px !important; }";
+  };
+
+  // ---------------------------------------------------------------- clean paste
+  // Text pasted from Word, Google Docs, web pages etc. arrives full of hidden
+  // fonts, sizes, colors and classes. Keep only the writing and its basic
+  // formatting (paragraphs, headings, lists, bold, italic, underline,
+  // strikethrough, links) so it takes on the site's own font and size.
+  var PASTE_BLOCK = { P: "p", H1: "h2", H2: "h2", H3: "h3", H4: "h3", H5: "h3", H6: "h3", BLOCKQUOTE: "blockquote", UL: "ul", OL: "ol", LI: "li" };
+  var PASTE_INLINE = { B: "strong", STRONG: "strong", I: "em", EM: "em", U: "u", S: "s", STRIKE: "s", DEL: "s", SUB: "sub", SUP: "sup" };
+  var PASTE_DROP = /^(SCRIPT|STYLE|META|LINK|TITLE|HEAD|O:P|XML|IMG|PICTURE|VIDEO|AUDIO|IFRAME|OBJECT|SVG|CANVAS|BUTTON|INPUT|SELECT|TEXTAREA|NOSCRIPT|TEMPLATE)$/;
+
+  function cleanPastedHtml(html, inlineOnly) {
+    var doc = new DOMParser().parseFromString(html, "text/html");
+    var out = document.createElement("div");
+
+    function wrapStyles(el, frag) {
+      // Docs/Word mark bold/italic with inline styles on spans, not tags
+      var st = el.style || {};
+      var w = st.fontWeight;
+      // Google Docs wraps everything in <b style="font-weight:normal">
+      if (el.tagName === "B" && w === "normal") return frag;
+      var wraps = [];
+      if (w === "bold" || w === "bolder" || parseInt(w, 10) >= 600) wraps.push("strong");
+      if (st.fontStyle === "italic") wraps.push("em");
+      var deco = (st.textDecorationLine || st.textDecoration || "");
+      if (/underline/.test(deco)) wraps.push("u");
+      if (/line-through/.test(deco)) wraps.push("s");
+      if (st.verticalAlign === "super") wraps.push("sup");
+      if (st.verticalAlign === "sub") wraps.push("sub");
+      wraps.forEach(function (tag) {
+        var w2 = document.createElement(tag);
+        w2.appendChild(frag);
+        frag = document.createDocumentFragment();
+        frag.appendChild(w2);
+      });
+      return frag;
+    }
+
+    function walk(node) {
+      var frag = document.createDocumentFragment();
+      Array.prototype.forEach.call(node.childNodes, function (n) {
+        if (n.nodeType === 3) {
+          frag.appendChild(document.createTextNode(n.textContent.replace(/ /g, " ").replace(/[\r\n\t]+/g, " ")));
+          return;
+        }
+        if (n.nodeType !== 1) return;
+        var tag = n.tagName.toUpperCase();
+        if (PASTE_DROP.test(tag) || tag.indexOf(":") !== -1 && tag !== "O:P") return;
+        if (tag === "BR") { frag.appendChild(document.createElement("br")); return; }
+        var inner = walk(n);
+        if (tag === "A" && n.getAttribute("href") && !/^\s*javascript:/i.test(n.getAttribute("href"))) {
+          var a = document.createElement("a");
+          a.setAttribute("href", n.getAttribute("href"));
+          if (/^https?:/i.test(n.getAttribute("href"))) { a.target = "_blank"; a.rel = "noopener"; }
+          a.appendChild(wrapStyles(n, inner));
+          frag.appendChild(a);
+          return;
+        }
+        if (PASTE_INLINE[tag]) {
+          if (tag === "B" && n.style.fontWeight === "normal") { frag.appendChild(wrapStyles(n, inner)); return; }
+          var el = document.createElement(PASTE_INLINE[tag]);
+          el.appendChild(inner);
+          frag.appendChild(el);
+          return;
+        }
+        if (PASTE_BLOCK[tag] && !inlineOnly) {
+          var bl = document.createElement(PASTE_BLOCK[tag]);
+          bl.appendChild(wrapStyles(n, inner));
+          frag.appendChild(bl);
+          return;
+        }
+        // Word Online / Docs put each paragraph in a styled <div>; treat a
+        // div holding only inline content as a paragraph
+        if (!inlineOnly && (tag === "DIV" || tag === "SECTION" || tag === "ARTICLE") && !n.querySelector("p, div, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, table")) {
+          var pp = document.createElement("p");
+          pp.appendChild(wrapStyles(n, inner));
+          frag.appendChild(pp);
+          return;
+        }
+        if (inlineOnly && (PASTE_BLOCK[tag] || /^(DIV|TR|TABLE|SECTION|ARTICLE)$/.test(tag))) {
+          // one-line text box: paragraphs become line breaks
+          frag.appendChild(wrapStyles(n, inner));
+          frag.appendChild(document.createElement("br"));
+          return;
+        }
+        // spans, fonts and anything else: keep the content, drop the wrapper
+        frag.appendChild(wrapStyles(n, inner));
+      });
+      return frag;
+    }
+    out.appendChild(walk(doc.body));
+
+    // tidy: drop empty paragraphs/formatting, merge whitespace, trailing <br>s
+    for (var pass = 0; pass < 3; pass++) {
+      out.querySelectorAll("p, h2, h3, li, blockquote, strong, em, u, s, sub, sup").forEach(function (el) {
+        if (!el.textContent.trim() && !el.querySelector("br")) el.remove();
+      });
+    }
+    // links are already underlined by the site
+    out.querySelectorAll("a u").forEach(function (u) {
+      while (u.firstChild) u.parentNode.insertBefore(u.firstChild, u);
+      u.remove();
+    });
+    out.querySelectorAll("p, h2, h3, li").forEach(function (el) {
+      while (el.lastChild && el.lastChild.nodeName === "BR") el.lastChild.remove();
+      if (!el.textContent.trim()) el.remove();
+    });
+    while (out.lastChild && (out.lastChild.nodeName === "BR" || (out.lastChild.nodeType === 3 && !out.lastChild.textContent.trim()))) out.lastChild.remove();
+    // loose text at the top level (no blocks) inside a passage becomes a paragraph
+    if (!inlineOnly && out.querySelector("p, h2, h3, ul, ol, blockquote")) {
+      var loose = [];
+      Array.prototype.slice.call(out.childNodes).forEach(function (n) {
+        var isBlock = n.nodeType === 1 && /^(P|H2|H3|UL|OL|BLOCKQUOTE)$/.test(n.nodeName);
+        if (!isBlock) { loose.push(n); return; }
+        if (loose.length) { flushLoose(loose, n); loose = []; }
+      });
+      if (loose.length) flushLoose(loose, null);
+    }
+    function flushLoose(nodes, before) {
+      var txt = nodes.map(function (n) { return n.textContent; }).join("").trim();
+      if (!txt) { nodes.forEach(function (n) { n.remove(); }); return; }
+      var p = document.createElement("p");
+      nodes.forEach(function (n) { if (n.nodeName !== "BR" || p.childNodes.length) p.appendChild(n); else n.remove(); });
+      out.insertBefore(p, before);
+    }
+    return out.innerHTML.replace(/ {2,}/g, " ");
+  }
+
+  function escapeHtml(t) {
+    return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function plainToHtml(text, inlineOnly) {
+    var paras = text.replace(/\r\n?/g, "\n").split(/\n{2,}/).map(function (p) { return p.trim(); }).filter(Boolean);
+    if (inlineOnly) return paras.map(function (p) { return escapeHtml(p).replace(/\n/g, "<br>"); }).join("<br>");
+    if (paras.length < 2 && text.indexOf("\n") === -1) return escapeHtml(text);
+    return paras.map(function (p) { return "<p>" + escapeHtml(p).replace(/\n/g, "<br>") + "</p>"; }).join("");
+  }
+
+  document.addEventListener("paste", function (e) {
+    var t = e.target;
+    var host = t && (t.nodeType === 1 ? t : t.parentElement);
+    host = host && host.closest('[contenteditable="true"]');
+    if (!host || host.closest(".editor-ui")) return;
+    var cd = e.clipboardData;
+    if (!cd) return;
+    var types = Array.prototype.slice.call(cd.types || []);
+    if (types.indexOf("Files") !== -1 && !cd.getData("text/plain")) return; // pasted photo: leave alone
+    // a passage (several paragraphs) can take paragraphs; a one-line box
+    // (a CV title, a heading) gets the text with line breaks instead
+    var inlineOnly = !host.classList.contains("editor-text-flow") && !host.classList.contains("space-text");
+    var html = cd.getData("text/html");
+    var clean = html ? cleanPastedHtml(html, inlineOnly) : plainToHtml(cd.getData("text/plain") || "", inlineOnly);
+    e.preventDefault();
+    if (!clean) return;
+    // Chrome's insertHTML sometimes adds styled <span>s to match the
+    // surroundings; anything styled that wasn't there before is unwrapped
+    // (formatting you set with the toolbar beforehand is left alone)
+    var before = new Set(host.querySelectorAll("span, font"));
+    document.execCommand("insertHTML", false, clean);
+    host.querySelectorAll("span, font").forEach(function (el) {
+      if (before.has(el) || el.closest(".editor-ui, .editor-img-wrap")) return;
+      while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
+      el.remove();
+    });
+    markDirty();
+  }, true);
+
   // ---------------------------------------------------------------- keyboard shortcuts
   // Undo/redo/save go to the editor shell, which keeps page-wide history
   // (text edits, moved photos, deleted blocks -- everything).
@@ -1696,6 +1835,138 @@
     if (findGallery(block)) addGalleryControls(bar, block);
     bar.appendChild(del);
     block.insertBefore(bar, block.firstChild);
+    addGapHandle(block);
+  }
+
+  // ---------------------------------------------------------------- gap between sections
+  // A small "↕ 40 px" tab on the top edge of each section: drag it up/down to
+  // set the space between this section and the one above. Double-click resets.
+  // Stored as inline margins (this section's margin-top; the one above gets
+  // margin-bottom: 0 so the two margins don't collapse into each other).
+  function prevBlock(block) {
+    var p = block.previousElementSibling;
+    while (p && (p.classList.contains("editor-ui") || p.classList.contains("free-canvas"))) p = p.previousElementSibling;
+    return p;
+  }
+  // the space you actually see: from the bottom of the last visible thing
+  // (photo, text, line...) in the section above to the top of the first
+  // visible thing in this one -- built-in padding inside sections counts as gap
+  function visibleBoxes(el) {
+    var out = [];
+    el.querySelectorAll("*").forEach(function (n) {
+      if (n.closest(".editor-ui")) return;
+      var tag = n.tagName;
+      var leaf = /^(IMG|VIDEO|IFRAME|HR|INPUT|BUTTON|CANVAS|SVG)$/.test(tag);
+      if (!leaf) {
+        for (var i = 0; i < n.childNodes.length; i++) {
+          var c = n.childNodes[i];
+          if (c.nodeType === 3 && c.textContent.trim()) { leaf = true; break; }
+        }
+      }
+      if (!leaf) return;
+      var r = n.getBoundingClientRect();
+      if (r.width || r.height) out.push(r);
+    });
+    return out;
+  }
+  function contentBottom(el) {
+    var boxes = visibleBoxes(el);
+    if (!boxes.length) { var r = el.getBoundingClientRect(); return r.bottom - (parseFloat(getComputedStyle(el).paddingBottom) || 0); }
+    return Math.max.apply(null, boxes.map(function (b) { return b.bottom; }));
+  }
+  function contentTop(el) {
+    var boxes = visibleBoxes(el);
+    if (!boxes.length) { var r = el.getBoundingClientRect(); return r.top + (parseFloat(getComputedStyle(el).paddingTop) || 0); }
+    return Math.min.apply(null, boxes.map(function (b) { return b.top; }));
+  }
+  function gapAbove(block) {
+    var p = prevBlock(block);
+    if (!p) return 0;
+    return Math.round(contentTop(block) - contentBottom(p));
+  }
+  // set the visible gap above `block` to px (margins only; the section above
+  // gets margin-bottom 0 so the two margins don't collapse into each other)
+  function setGapAbove(block, px) {
+    var p = prevBlock(block);
+    if (!p) return;
+    p.style.marginBottom = "0px";
+    var mt = parseFloat(getComputedStyle(block).marginTop) || 0;
+    block.style.marginTop = Math.round(mt + (px - gapAbove(block))) + "px";
+  }
+  // new blocks start close to their neighbours instead of inheriting the
+  // big built-in section spacing (drag the ↕ tab to change it)
+  var NEW_BLOCK_GAP = 24;
+  function tightenGaps(block) {
+    if (!block.isConnected) return;
+    if (prevBlock(block) && gapAbove(block) > NEW_BLOCK_GAP) setGapAbove(block, NEW_BLOCK_GAP);
+    var n = block.nextElementSibling;
+    while (n && (n.classList.contains("editor-ui") || n.classList.contains("free-canvas"))) n = n.nextElementSibling;
+    if (n && gapAbove(n) > NEW_BLOCK_GAP) setGapAbove(n, NEW_BLOCK_GAP);
+    [block, n].forEach(function (x) {
+      var hh = x && x.querySelector(":scope > .editor-gap-handle");
+      if (hh && hh._refresh) hh._refresh();
+    });
+  }
+  function addGapHandle(block) {
+    if (block.querySelector(":scope > .editor-gap-handle")) return;
+    var h = document.createElement("div");
+    h.className = "editor-gap-handle editor-ui";
+    h.contentEditable = "false";
+    h.title = "Drag up or down to change the space above this section. Double-click to reset.";
+    var label = document.createElement("span");
+    h.appendChild(label);
+    function refresh() {
+      var p = prevBlock(block);
+      h.hidden = !p;
+      label.textContent = "↕ " + gapAbove(block) + " px";
+    }
+    block.addEventListener("mouseenter", refresh);
+    h._refresh = refresh;
+    h.addEventListener("mousedown", function (e) { e.preventDefault(); e.stopPropagation(); }); // no text selection while dragging
+    h.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      var p = prevBlock(block);
+      if (!p) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // make spacing linear: the section above stops contributing a margin,
+      // and this section's top margin is set to keep the same gap for now
+      setGapAbove(block, gapAbove(block));
+      var startMt = parseFloat(block.style.marginTop) || 0;
+      var startY = e.clientY;
+      var base = gapAbove(block);
+      h.setPointerCapture(e.pointerId);
+      block.classList.add("editor-gap-resizing");
+      function move(ev) {
+        var dy = ev.clientY - startY;
+        // never let the gap go below 0 (sections would overlap)
+        var want = Math.max(-base, dy);
+        block.style.marginTop = Math.round(startMt + want) + "px";
+        label.textContent = "↕ " + gapAbove(block) + " px";
+      }
+      function up() {
+        h.removeEventListener("pointermove", move);
+        h.removeEventListener("pointerup", up);
+        h.removeEventListener("pointercancel", up);
+        block.classList.remove("editor-gap-resizing");
+        markDirty();
+      }
+      h.addEventListener("pointermove", move);
+      h.addEventListener("pointerup", up);
+      h.addEventListener("pointercancel", up);
+    });
+    h.addEventListener("dblclick", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      block.style.marginTop = "";
+      var p = prevBlock(block);
+      if (p) { p.style.marginBottom = ""; if (!p.getAttribute("style")) p.removeAttribute("style"); }
+      if (!block.getAttribute("style")) block.removeAttribute("style");
+      refresh();
+      markDirty();
+    });
+    block.appendChild(h);
+    refresh();
   }
 
   // ---------------------------------------------------------------- gallery layout
@@ -2284,22 +2555,34 @@
       var canvas = pc.querySelector(":scope > .free-canvas");
       if (canvas) pc.insertBefore(el, canvas); else pc.appendChild(el);
     }
+    requestAnimationFrame(function () { tightenGaps(el); });
     return el;
   }
 
   function insertTextBlock() {
+    // same centered column as the page's other paragraphs (.project-body),
+    // and a full text passage: Enter makes new paragraphs, + Media works
+    var sec = document.createElement("div");
+    sec.className = "project-body container";
     var p = document.createElement("p");
-    p.className = "container";
-    p.textContent = "New text";
-    p.setAttribute("contenteditable", "true");
-    p.dataset.editorTextSetup = "true";
-    p.addEventListener("input", markDirty);
-    appendBlock(p);
-    addBlockHandle(p);
+    var tn = document.createTextNode("New text");
+    p.appendChild(tn);
+    sec.appendChild(p);
+    appendBlock(sec);
+    addBlockHandle(sec);
+    setupContinuousTextArea(sec);
     markDirty();
-    p.focus();
-    document.execCommand("selectAll", false, null);
-    p.scrollIntoView({ behavior: "smooth", block: "center" });
+    // select just the placeholder words so typing replaces them
+    var flow = sec.querySelector(".editor-text-flow");
+    window.focus();
+    if (flow) flow.focus();
+    var r = document.createRange();
+    r.setStart(tn, 0);
+    r.setEnd(tn, tn.length);
+    var sel = document.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    sec.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   function insertMediaBlock() {

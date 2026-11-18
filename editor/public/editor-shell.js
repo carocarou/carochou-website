@@ -263,6 +263,7 @@
         win.__editorOnRebuild = function () { snapshotNow(); showSnapshot(); };
         applyThemePreview();
         onEditorReady();
+        setBottomRoom();
       };
       doc.head.appendChild(script);
     };
@@ -644,16 +645,32 @@
     });
   });
 
+  // ---------------------------------------------------------------- room under the page for "+ Add block"
+  // tells the page how far the button's middle is above the preview's bottom
+  // edge, so the page can leave matching room under its footer
+  function setBottomRoom() {
+    var w = frameWin();
+    if (!w || !w.__editorSetBottomRoom || addBlock.hidden) return;
+    var btn = $("add-block-btn").getBoundingClientRect();
+    var fr = frame.getBoundingClientRect();
+    var center = fr.bottom - (btn.top + btn.height / 2);
+    if (center < 10 || center > 300) center = 40; // phone preview taller than the window
+    w.__editorSetBottomRoom(center);
+  }
+  window.addEventListener("resize", setBottomRoom);
+
   // ---------------------------------------------------------------- phone / desktop
   $("viewport-desktop-btn").addEventListener("click", function () {
     frameWrap.classList.remove("phone-mode");
     this.classList.add("active");
     $("viewport-phone-btn").classList.remove("active");
+    setTimeout(setBottomRoom, 50);
   });
   $("viewport-phone-btn").addEventListener("click", function () {
     frameWrap.classList.add("phone-mode");
     this.classList.add("active");
     $("viewport-desktop-btn").classList.remove("active");
+    setTimeout(setBottomRoom, 50);
   });
 
   // ---------------------------------------------------------------- site styles
