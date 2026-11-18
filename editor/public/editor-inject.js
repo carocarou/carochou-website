@@ -129,33 +129,42 @@
       layoutRect();
     }
 
-    rect.addEventListener("mousedown", function (e) {
-      if (e.target !== rect) return;
+    // drags use pointer capture, so they keep tracking even when the cursor
+    // goes outside the crop box, the dark backdrop, or the page itself
+    function capture(el, e, onMove) {
+      el.setPointerCapture(e.pointerId);
+      function up() {
+        el.removeEventListener("pointermove", onMove);
+        el.removeEventListener("pointerup", up);
+        el.removeEventListener("pointercancel", up);
+      }
+      el.addEventListener("pointermove", onMove);
+      el.addEventListener("pointerup", up);
+      el.addEventListener("pointercancel", up);
+    }
+
+    rect.addEventListener("pointerdown", function (e) {
+      if (e.target !== rect || e.button !== 0) return;
       e.preventDefault();
       var startX = e.clientX, startY = e.clientY;
       var orig = { x: box.x, y: box.y };
-      function onMove(ev) {
+      capture(rect, e, function (ev) {
         var sw = stage.clientWidth, sh = stage.clientHeight;
         box.x = Math.min(Math.max(0, orig.x + (ev.clientX - startX)), sw - box.w);
         box.y = Math.min(Math.max(0, orig.y + (ev.clientY - startY)), sh - box.h);
         layoutRect();
-      }
-      function onUp() {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-      }
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
+      });
     });
 
     rect.querySelectorAll(".editor-crop-handle").forEach(function (handle) {
-      handle.addEventListener("mousedown", function (e) {
+      handle.addEventListener("pointerdown", function (e) {
+        if (e.button !== 0) return;
         e.preventDefault();
         e.stopPropagation();
         var pos = handle.dataset.pos;
         var startX = e.clientX, startY = e.clientY;
         var orig = { x: box.x, y: box.y, w: box.w, h: box.h };
-        function onMove(ev) {
+        capture(handle, e, function onMove(ev) {
           var dx = ev.clientX - startX, dy = ev.clientY - startY;
           var sw = stage.clientWidth, sh = stage.clientHeight;
           var b = { x: orig.x, y: orig.y, w: orig.w, h: orig.h };
@@ -169,19 +178,14 @@
           b.h = Math.min(b.h, sh - b.y);
           box = b;
           layoutRect();
-        }
-        function onUp() {
-          document.removeEventListener("mousemove", onMove);
-          document.removeEventListener("mouseup", onUp);
-        }
-        document.addEventListener("mousemove", onMove);
-        document.addEventListener("mouseup", onUp);
+        });
       });
     });
 
     function close() { overlay.remove(); }
+    // closes only with Apply Crop or Cancel -- never by clicking the backdrop,
+    // since finishing a drag over the backdrop counts as a click there
     cancelBtn.addEventListener("click", close);
-    overlay.addEventListener("click", function (e) { if (e.target === overlay) close(); });
 
     applyBtn.addEventListener("click", function () {
       var scaleX = pic.naturalWidth / stage.clientWidth;
