@@ -260,6 +260,7 @@
         win.__editorOnDirty = onDirty;
         win.__editorOnKey = onKey;
         win.__editorOnNotice = notice;
+        win.__editorOnRebuild = function () { snapshotNow(); showSnapshot(); };
         applyThemePreview();
         onEditorReady();
       };

@@ -538,3 +538,12 @@ p { margin: 0 0 1em; }
 }
 .lightbox-close:hover { opacity: 1; }
 .mailing-list-row button:hover { background: #333; }
+
+/* ---- Lines set in the editor ----
+   .line-below adds a thin grey line under a box; .no-line-below /
+   .no-line-above remove a line the site's styles would otherwise draw.
+   hr.divider is a standalone line added with "+ Add block → Line". */
+.page-content .line-below { border-bottom: 1px solid #eee !important; padding-bottom: 14px; }
+.page-content .no-line-below { border-bottom: none !important; }
+.page-content .no-line-above { border-top: none !important; }
+hr.divider { border: none; border-top: 1px solid #eee; margin: 32px auto; max-width: 900px; }

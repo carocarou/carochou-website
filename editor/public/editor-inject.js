@@ -1623,8 +1623,143 @@
       deleteBlock(block);
     });
     bar.appendChild(handle);
+    if (findGallery(block)) addGalleryControls(bar, block);
     bar.appendChild(del);
     block.insertBefore(bar, block.firstChild);
+  }
+
+  // ---------------------------------------------------------------- gallery layout
+  // A photo gallery can be shown as a grid (.gallery-grid) or as a slideshow
+  // (.carousel[data-layout=carousel], built into a slideshow by main.js).
+  var SLIDESHOW_SEL = '[data-layout="carousel"]';
+  function findGallery(block) {
+    if (block.matches(".gallery-grid, " + SLIDESHOW_SEL)) return block;
+    return block.querySelector(":scope > .gallery-grid, :scope > " + SLIDESHOW_SEL);
+  }
+
+  function barButton(label, title, onClick) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "editor-block-opt";
+    b.title = title;
+    b.textContent = label;
+    b.addEventListener("mousedown", function (e) { e.preventDefault(); e.stopPropagation(); });
+    b.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      onClick();
+    });
+    return b;
+  }
+
+  function addGalleryControls(bar, block) {
+    var gal = findGallery(block);
+    var isShow = gal.matches(SLIDESHOW_SEL);
+    var seg = document.createElement("div");
+    seg.className = "editor-block-seg";
+    var grid = barButton("▦ Grid", "Show these photos as a grid", function () {
+      var g = findGallery(block);
+      if (g && g.matches(SLIDESHOW_SEL)) { toGrid(g); rebuild(); }
+    });
+    var show = barButton("◧ Slideshow", "Show one photo at a time with arrows", function () {
+      var g = findGallery(block);
+      if (g && !g.matches(SLIDESHOW_SEL)) { toSlideshow(g); rebuild(); }
+    });
+    (isShow ? show : grid).classList.add("on");
+    seg.appendChild(grid);
+    seg.appendChild(show);
+    bar.appendChild(seg);
+    if (isShow) {
+      var fit = gal.classList.contains("carousel--fit");
+      bar.appendChild(barButton(fit ? "Whole photos ✓" : "Whole photos",
+        fit ? "Photos show uncropped. Click to crop them to the same 4:3 frame"
+            : "Show each photo uncropped instead of cropping to a 4:3 frame",
+        function () {
+          var g = findGallery(block);
+          if (!g) return;
+          g.classList.toggle("carousel--fit");
+          rebuild();
+        }));
+    }
+    bar.appendChild(barButton("+ Photos", "Add more photos to this gallery", function () {
+      var g = findGallery(block);
+      if (g) addPhotosTo(g);
+    }));
+  }
+
+  // the gallery's photo items (editor wrappers) in order
+  function galleryItems(gal) {
+    var holder = gal.querySelector(":scope > .carousel-track") || gal;
+    return Array.prototype.filter.call(holder.children, function (el) {
+      return !el.classList.contains("editor-ui") && el.querySelector("img, video") || /^(IMG|A)$/.test(el.tagName);
+    });
+  }
+
+  function toSlideshow(grid) {
+    var car = document.createElement("div");
+    car.className = "carousel";
+    car.setAttribute("data-layout", "carousel");
+    galleryItems(grid).forEach(function (item) {
+      // a slideshow takes photos (or linked photos); captioned figures give up their photo
+      var fig = item.tagName === "FIGURE" ? item : item.querySelector("figure");
+      if (fig) {
+        var media = fig.querySelector("a > img") ? fig.querySelector("a") : fig.querySelector("img");
+        if (media) fig.replaceWith(media); else return;
+      }
+      car.appendChild(item);
+    });
+    grid.replaceWith(car);
+  }
+
+  function toGrid(car) {
+    var grid = document.createElement("div");
+    grid.className = "gallery-grid";
+    galleryItems(car).forEach(function (item) { grid.appendChild(item); });
+    car.replaceWith(grid);
+  }
+
+  // save a snapshot of the page and reload it, so main.js rebuilds the
+  // slideshow (arrows, counter) from the new markup. Undo works as usual.
+  function rebuild() {
+    deselect();
+    markDirty();
+    if (window.__editorOnRebuild) window.__editorOnRebuild();
+  }
+
+  function uploadPhotosInto(holder, files, done) {
+    var pending = files.length;
+    files.forEach(function (file) {
+      var ph = makePlaceholder(file);
+      holder.appendChild(ph);
+      uploadWithProgress(file, ph.setProgress).then(function (path) {
+        ph.replaceWith(createMediaEl(path, file));
+      }).catch(function (err) { ph.remove(); alert("Upload failed: " + err.message); })
+        .then(function () { if (!--pending) done(); });
+    });
+  }
+
+  function addPhotosTo(gal) {
+    pickFiles("image/*", true, function (files) {
+      var holder = gal.querySelector(":scope > .carousel-track") || gal;
+      uploadPhotosInto(holder, files, rebuild);
+    });
+  }
+
+  function insertSlideshowBlock() {
+    pickFiles("image/*", true, function (files) {
+      var outer = document.createElement("div");
+      outer.className = "container";
+      var car = document.createElement("div");
+      car.className = "carousel";
+      car.setAttribute("data-layout", "carousel");
+      outer.appendChild(car);
+      appendBlock(outer);
+      outer.scrollIntoView({ behavior: "smooth", block: "center" });
+      uploadPhotosInto(car, files, function () {
+        if (!car.querySelector("img")) { outer.remove(); return; }
+        rebuild();
+      });
+    });
   }
 
   function deleteBlock(block) {
@@ -1632,6 +1767,180 @@
     block.remove();
     markDirty();
     if (window.__editorOnNotice) window.__editorOnNotice("Section deleted", true);
+  }
+
+  // ---------------------------------------------------------------- text boxes & lines
+  // Hovering a text box (a CV entry, a heading, a paragraph...) shows a small
+  // bar to delete it or add/remove the thin line under it. Hovering a
+  // standalone line (<hr>) offers to delete it. Lines under boxes are site
+  // CSS borders, so they're switched with classes defined in style.css:
+  // .line-below / .no-line-below / .no-line-above.
+  function setupBoxBar() {
+    var pc = getPageContent();
+    if (!pc) return;
+    var bar = document.createElement("div");
+    bar.className = "editor-box-bar editor-ui";
+    bar.hidden = true;
+    var outline = document.createElement("div");
+    outline.className = "editor-box-outline editor-ui";
+    outline.hidden = true;
+    document.body.appendChild(outline);
+    document.body.appendChild(bar);
+    var target = null;
+    var hideTimer = null;
+
+    function realNext(el) {
+      var n = el.nextElementSibling;
+      while (n && n.classList.contains("editor-ui")) n = n.nextElementSibling;
+      return n;
+    }
+    function hasBorder(el, side) {
+      var cs = getComputedStyle(el);
+      return parseFloat(cs["border" + side + "Width"]) > 0 && cs["border" + side + "Style"] !== "none";
+    }
+    function lineBelow(box) {
+      if (hasBorder(box, "Bottom")) return true;
+      var n = realNext(box);
+      return !!(n && n.tagName !== "HR" && hasBorder(n, "Top"));
+    }
+    function tidyClass(el) { if (!el.className) el.removeAttribute("class"); }
+    function toggleLine(box) {
+      if (lineBelow(box)) {
+        box.classList.remove("line-below");
+        if (hasBorder(box, "Bottom")) box.classList.add("no-line-below");
+        var n = realNext(box);
+        if (n && hasBorder(n, "Top")) n.classList.add("no-line-above");
+      } else {
+        box.classList.remove("no-line-below");
+        var n2 = realNext(box);
+        if (n2) { n2.classList.remove("no-line-above"); tidyClass(n2); }
+        if (!lineBelow(box)) box.classList.add("line-below");
+      }
+      tidyClass(box);
+      markDirty();
+    }
+
+    function boxFor(el) {
+      if (!el || !el.closest || !pc.contains(el)) return null;
+      if (el.closest(".editor-ui, .editor-img-wrap, .editor-block-bar, .free-canvas, form")) return null;
+      var entry = el.closest(".cv-entry");
+      if (entry) return entry;
+      var flow = el.closest(".editor-text-flow");
+      if (flow) {
+        var n = el;
+        while (n && n.parentElement !== flow) n = n.parentElement;
+        if (!n || n.matches("img, video, figure, .editor-img-wrap") || !n.textContent.trim()) return null;
+        return n;
+      }
+      var leaf = el.closest('[contenteditable="true"]');
+      if (!leaf || leaf.parentElement === pc || leaf.closest(".site-header, .hero")) return null;
+      return leaf;
+    }
+    function hrNear(x, y) {
+      var hit = null;
+      pc.querySelectorAll("hr").forEach(function (hr) {
+        var r = hr.getBoundingClientRect();
+        if (r.width && Math.abs(y - (r.top + r.height / 2)) <= 8 && x >= r.left - 6 && x <= r.right + 6) hit = hr;
+      });
+      return hit;
+    }
+
+    function btn(label, title, cls, onClick) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "editor-box-btn" + (cls ? " " + cls : "");
+      b.title = title;
+      b.textContent = label;
+      b.addEventListener("mousedown", function (e) { e.preventDefault(); e.stopPropagation(); });
+      b.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); onClick(); });
+      b.addEventListener("mouseenter", function () { outline.classList.toggle("danger", !!cls); });
+      b.addEventListener("mouseleave", function () { outline.classList.remove("danger"); });
+      return b;
+    }
+
+    function place() {
+      if (!target || !target.isConnected) return hide();
+      var r = target.getBoundingClientRect();
+      var isHr = target.tagName === "HR";
+      outline.style.left = (r.left + scrollX - 4) + "px";
+      outline.style.top = (r.top + scrollY - (isHr ? 6 : 4)) + "px";
+      outline.style.width = (r.width + 8) + "px";
+      outline.style.height = (r.height + (isHr ? 12 : 8)) + "px";
+      var bw = bar.offsetWidth, bh = bar.offsetHeight;
+      var left = r.right + 8;
+      var top = isHr ? r.top + r.height / 2 - bh / 2 : r.top;
+      if (left + bw > document.documentElement.clientWidth - 4) {
+        left = r.right - bw;
+        top = isHr ? r.top - bh - 4 : r.top - bh - 4;
+      }
+      bar.style.left = (left + scrollX) + "px";
+      bar.style.top = (top + scrollY) + "px";
+    }
+
+    function render() {
+      bar.innerHTML = "";
+      if (target.tagName === "HR") {
+        bar.appendChild(btn("Delete line", "Delete this line", "danger", function () {
+          var hr = target; hide();
+          var parent = hr.parentElement;
+          hr.remove();
+          // a "Line" block that's now empty goes too
+          if (parent && parent.parentElement === pc && !Array.prototype.some.call(parent.children, function (c) { return !c.classList.contains("editor-ui"); })) parent.remove();
+          markDirty();
+          if (window.__editorOnNotice) window.__editorOnNotice("Line deleted", true);
+        }));
+      } else {
+        var box = target;
+        var has = lineBelow(box);
+        bar.appendChild(btn(has ? "Remove line below" : "Add line below",
+          has ? "Remove the line under this box" : "Add a thin grey line under this box", "",
+          function () { toggleLine(box); render(); place(); }));
+        bar.appendChild(btn("Delete", box.classList.contains("cv-entry") ? "Delete this entry" : "Delete this text box", "danger", function () {
+          hide(); box.remove(); markDirty();
+          if (window.__editorOnNotice) window.__editorOnNotice("Text box deleted", true);
+        }));
+      }
+    }
+
+    function show(t) {
+      clearTimeout(hideTimer);
+      if (t === target && !bar.hidden) return;
+      target = t;
+      bar.hidden = false;
+      outline.hidden = false;
+      outline.classList.remove("danger");
+      render();
+      place();
+    }
+    function hide() {
+      clearTimeout(hideTimer);
+      target = null;
+      bar.hidden = true;
+      outline.hidden = true;
+    }
+
+    document.addEventListener("mousemove", function (e) {
+      if (bar.contains(e.target)) { clearTimeout(hideTimer); return; }
+      if (e.buttons) return hide();
+      var t = hrNear(e.clientX, e.clientY) || boxFor(e.target);
+      if (t) return show(t);
+      if (target && !hideTimer) hideTimer = setTimeout(function () { hideTimer = null; hide(); }, 350);
+    }, true);
+    window.addEventListener("scroll", function () { if (target) place(); }, true);
+    window.addEventListener("resize", function () { if (target) place(); });
+    document.addEventListener("input", function () { if (target) place(); });
+  }
+
+  function insertLineBlock() {
+    var wrap = document.createElement("div");
+    wrap.className = "container";
+    var hr = document.createElement("hr");
+    hr.className = "divider";
+    wrap.appendChild(hr);
+    appendBlock(wrap);
+    addBlockHandle(wrap);
+    markDirty();
+    wrap.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   function setupContentFlow() {
@@ -1818,6 +2127,8 @@
     addTextBox: insertTextBlock,
     addMedia: insertMediaBlock,
     addImage: insertMediaBlock,
+    addSlideshow: insertSlideshowBlock,
+    addLine: insertLineBlock,
     addMailingList: insertMailingListBlock,
   };
 
@@ -1843,6 +2154,7 @@
     setupMediaBlock(m, STANDALONE);
   });
   setupContentFlow();
+  setupBoxBar();
   document.querySelectorAll(".free-mailing-list").forEach(function (wrap) {
     setupExistingMailingListBlock(wrap);
   });

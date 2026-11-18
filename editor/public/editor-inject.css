@@ -243,6 +243,22 @@ body.editor-placing, body.editor-placing * { cursor: crosshair !important; }
   box-shadow: 0 0 0 1px rgba(196,50,43,0.35), 0 1px 3px rgba(0,0,0,0.12);
 }
 .editor-block-delete:hover { background: #c4322b; color: #fff; }
+.editor-block-seg { display: inline-flex; border-radius: 4px; overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.12); }
+.editor-block-opt {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: #fff;
+  color: #222;
+  font: inherit;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.12);
+  white-space: nowrap;
+}
+.editor-block-seg .editor-block-opt { border-radius: 0; box-shadow: none; }
+.editor-block-seg .editor-block-opt + .editor-block-opt { border-left: 1px solid rgba(0,0,0,0.12); }
+.editor-block-opt:hover { background: #eef3fd; }
+.editor-block-opt.on { background: #2f6fed; color: #fff; }
 /* show exactly what will be deleted */
 .page-content > *:has(> .editor-block-bar .editor-block-delete:hover) {
   outline: 2px solid #c4322b;
@@ -517,3 +533,35 @@ body.editor-placing, body.editor-placing * { cursor: crosshair !important; }
 }
 .carousel--fit .carousel-track > .editor-img-wrap > img,
 .carousel--fit .carousel-track > .editor-img-wrap > a > img { aspect-ratio: auto; object-fit: contain; }
+
+/* text box / line hover bar */
+.editor-box-outline {
+  position: absolute;
+  z-index: 9000;
+  pointer-events: none;
+  border: 1px dashed rgba(47,111,237,0.7);
+  border-radius: 4px;
+}
+.editor-box-outline.danger { border: 2px solid #c4322b; background: rgba(196,50,43,0.05); }
+.editor-box-bar {
+  position: absolute;
+  z-index: 9001;
+  display: flex;
+  gap: 4px;
+  font: 11px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.editor-box-bar[hidden], .editor-box-outline[hidden] { display: none; }
+.editor-box-btn {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: #fff;
+  color: #222;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.12);
+}
+.editor-box-btn:hover { background: #eef3fd; }
+.editor-box-btn.danger { color: #c4322b; box-shadow: 0 0 0 1px rgba(196,50,43,0.35), 0 1px 3px rgba(0,0,0,0.12); }
+.editor-box-btn.danger:hover { background: #c4322b; color: #fff; }
