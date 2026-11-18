@@ -547,3 +547,7 @@ p { margin: 0 0 1em; }
 .page-content .no-line-below { border-bottom: none !important; }
 .page-content .no-line-above { border-top: none !important; }
 hr.divider { border: none; border-top: 1px solid #eee; margin: 32px auto; max-width: 900px; }
+
+/* ---- Blank space block (added in the editor): an adjustable gap that can also hold text ---- */
+.space-block { box-sizing: border-box; max-width: 720px; }
+.space-text > :first-child { margin-top: 0; }

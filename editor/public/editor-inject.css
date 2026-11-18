@@ -84,6 +84,37 @@
   color: #444;
 }
 .editor-inline-insert-btn:hover { background: #ddd; }
+.editor-inline-insert-row { display: flex; gap: 6px; margin: 10px 0 0; }
+.editor-inline-insert-row .editor-inline-insert-btn { margin: 0; }
+
+/* blank space block (editor view) */
+.space-block { outline: 1px dashed rgba(47,111,237,0.35); outline-offset: -1px; }
+.space-block:hover, .space-block:focus-within, .space-block.editor-space-resizing { outline-color: rgba(47,111,237,0.8); }
+.space-text { min-height: 1.5em; outline: none; }
+.space-text:empty::before { content: "Type here, or leave empty as blank space"; color: #aab; font-style: italic; pointer-events: none; }
+.space-block:not(:hover):not(:focus-within) .space-text:empty::before { visibility: hidden; }
+.editor-space-handle {
+  position: absolute;
+  left: 50%;
+  bottom: -9px;
+  transform: translateX(-50%);
+  z-index: 41;
+  cursor: ns-resize;
+  user-select: none;
+  touch-action: none;
+}
+.editor-space-handle span {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 9px;
+  background: #2f6fed;
+  color: #fff;
+  font: 11px/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.space-block:hover .editor-space-handle span, .editor-space-resizing .editor-space-handle span { opacity: 1; }
 
 /* crop modal */
 .editor-crop-overlay {
@@ -565,3 +596,28 @@ body.editor-placing, body.editor-placing * { cursor: crosshair !important; }
 .editor-box-btn:hover { background: #eef3fd; }
 .editor-box-btn.danger { color: #c4322b; box-shadow: 0 0 0 1px rgba(196,50,43,0.35), 0 1px 3px rgba(0,0,0,0.12); }
 .editor-box-btn.danger:hover { background: #c4322b; color: #fff; }
+
+.editor-box-grip { cursor: grab; color: #fff; background: #2f6fed; box-shadow: none; }
+.editor-box-grip:hover { background: #2457d6; }
+.editor-text-dragging { opacity: 0.35; }
+body.editor-text-moving, body.editor-text-moving * { cursor: grabbing !important; user-select: none; }
+
+/* shift-click group */
+.editor-group-selected { outline: 2px solid #2f6fed !important; outline-offset: 3px; background-color: rgba(47,111,237,0.06); border-radius: 2px; }
+.editor-group-pill {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 12px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(20,20,30,0.16), 0 0 0 1px rgba(0,0,0,0.08);
+  font: 12px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #333;
+}
+.editor-group-pill[hidden] { display: none; }

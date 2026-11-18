@@ -574,7 +574,7 @@
     if (!media || !media.closest(".page-content")) return;
     e.preventDefault();
     e.stopPropagation();
-    if (wrap) selectWrap(wrap);
+    if (wrap && !e.shiftKey) selectWrap(wrap);
   }, true);
   document.addEventListener("mousedown", function (e) {
     if (!selectedWrap) return;
@@ -1227,7 +1227,95 @@
     insertBtn.title = "Add a photo or video where your cursor is";
     insertBtn.className += " editor-inline-insert-btn editor-ui";
     insertBtn.addEventListener("mousedown", function (e) { e.preventDefault(); });
-    container.appendChild(insertBtn);
+    var spaceBtn = makeBtn("+ Blank space", function () {
+      var top = container;
+      while (top.parentElement && top.parentElement !== getPageContent()) top = top.parentElement;
+      insertSpaceBlock(top.parentElement ? top : null);
+    });
+    spaceBtn.title = "Add an adjustable blank block below this section: type in it, or leave it empty as a gap";
+    spaceBtn.className += " editor-inline-insert-btn";
+    spaceBtn.addEventListener("mousedown", function (e) { e.preventDefault(); });
+    var row = document.createElement("div");
+    row.className = "editor-inline-insert-row editor-ui";
+    row.contentEditable = "false";
+    row.appendChild(insertBtn);
+    row.appendChild(spaceBtn);
+    container.appendChild(row);
+  }
+
+  // ---------------------------------------------------------------- blank space block
+  // <div class="space-block container" style="min-height: 80px"><div class="space-text"></div></div>
+  // A clear block whose height is dragged from its bottom edge. Type in it
+  // (the text toolbar works as usual) or leave it empty as a gap.
+  function setupSpaceBlock(block) {
+    if (block.dataset.editorSetup) return;
+    block.dataset.editorSetup = "true";
+    var text = block.querySelector(":scope > .space-text");
+    if (!text) {
+      text = document.createElement("div");
+      text.className = "space-text";
+      block.appendChild(text);
+    }
+    text.setAttribute("contenteditable", "true");
+    text.addEventListener("input", markDirty);
+    if (getComputedStyle(block).position === "static") {
+      block.style.position = "relative";
+      block.dataset.editorPosAdded = "true";
+    }
+    var handle = document.createElement("div");
+    handle.className = "editor-space-handle editor-ui";
+    handle.contentEditable = "false";
+    handle.title = "Drag up or down to change the height";
+    var label = document.createElement("span");
+    handle.appendChild(label);
+    function showH() { label.textContent = "↕ " + Math.round(block.getBoundingClientRect().height) + " px"; }
+    showH();
+    handle.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      handle.setPointerCapture(e.pointerId);
+      var startY = e.clientY;
+      var startH = parseFloat(block.style.minHeight) || block.getBoundingClientRect().height;
+      block.classList.add("editor-space-resizing");
+      function move(ev) {
+        block.style.minHeight = Math.max(16, Math.round(startH + ev.clientY - startY)) + "px";
+        showH();
+      }
+      function up() {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        block.classList.remove("editor-space-resizing");
+        markDirty();
+      }
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+    });
+    text.addEventListener("input", showH);
+    block.appendChild(handle);
+  }
+
+  function insertSpaceBlock(after) {
+    var pc = getPageContent();
+    if (!pc) return;
+    var block = document.createElement("div");
+    block.className = "space-block container";
+    block.style.minHeight = "80px";
+    var text = document.createElement("div");
+    text.className = "space-text";
+    block.appendChild(text);
+    if (after) pc.insertBefore(block, after.nextSibling); else appendBlock(block);
+    addBlockHandle(block);
+    setupSpaceBlock(block);
+    markDirty();
+    block.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function setupTextLeaf(el) {
+    if (el.dataset.editorTextSetup) return;
+    el.dataset.editorTextSetup = "true";
+    el.setAttribute("contenteditable", "true");
+    el.addEventListener("input", markDirty);
+    addTextFreeToggle(el);
   }
 
   function setupTextEditing() {
@@ -1238,11 +1326,7 @@
           if (el.closest(".editor-text-flow")) return;
           if (el.parentElement && el.parentElement.closest('[contenteditable="true"]')) return;
           if (!isLeafTextEl(el)) return;
-          if (el.dataset.editorTextSetup) return;
-          el.dataset.editorTextSetup = "true";
-          el.setAttribute("contenteditable", "true");
-          el.addEventListener("input", markDirty);
-          addTextFreeToggle(el);
+          setupTextLeaf(el);
         });
       });
     });
@@ -1259,6 +1343,7 @@
   // size, bold/italic/underline/strike, color, highlight, alignment, links,
   // clear formatting. With text selected it styles just the selection; with
   // only a blinking cursor, font/size/alignment apply to the whole paragraph.
+  var repositionTextToolbar = function () {};
   function setupTextToolbar() {
     var Theme = window.parent && window.parent.SiteTheme;
     var fonts = Theme ? Theme.FONTS : [{ name: "System (default)", css: "" }];
@@ -1551,9 +1636,20 @@
       var left = Math.min(Math.max(8, rect.left + rect.width / 2 - bw / 2), window.innerWidth - bw - 8);
       var top = rect.top - bh - 10;
       if (top < 8) top = Math.min(rect.bottom + 10, window.innerHeight - bh - 8);
+      // stay clear of the text box's own bar (Move / Remove line / Duplicate / Delete)
+      var boxBar = document.querySelector(".editor-box-bar:not([hidden])");
+      if (boxBar) {
+        var b = boxBar.getBoundingClientRect();
+        var t = Math.max(8, top);
+        if (left < b.right + 6 && left + bw > b.left - 6 && t < b.bottom + 6 && t + bh > b.top - 6) {
+          top = b.top - bh - 8;
+          if (top < 8) top = Math.max(rect.bottom, b.bottom) + 10;
+        }
+      }
       bar.style.left = left + "px";
       bar.style.top = Math.max(8, top) + "px";
     }
+    repositionTextToolbar = function () { if (bar.classList.contains("open")) position(); };
     function show() { bar.classList.add("open"); sync(); position(); }
     function hide() { bar.classList.remove("open"); activeRoot = null; savedRange = null; }
 
@@ -1775,6 +1871,28 @@
   // standalone line (<hr>) offers to delete it. Lines under boxes are site
   // CSS borders, so they're switched with classes defined in style.css:
   // .line-below / .no-line-below / .no-line-above.
+  // strip the editor's per-element editing state so the element can be set up again
+  function resetTextEl(el) {
+    el.querySelectorAll(".editor-text-toggle").forEach(function (u) { u.remove(); });
+    [el].concat(Array.prototype.slice.call(el.querySelectorAll("[data-editor-text-setup], [contenteditable='true']"))).forEach(function (n) {
+      if (n.getAttribute("contenteditable") === "true") n.removeAttribute("contenteditable");
+      delete n.dataset.editorTextSetup;
+    });
+  }
+  // make a moved/copied text box editable in its new spot
+  function setupTextAfterMove(el) {
+    if (el.parentElement && el.parentElement.closest('[contenteditable="true"]')) return; // inside a text passage already
+    setupTextEditing();
+    var leaves = [el].concat(Array.prototype.slice.call(el.querySelectorAll(TEXT_TAGS.join(","))));
+    leaves.forEach(function (n) {
+      if (n.closest(".editor-ui, .editor-img-wrap")) return;
+      if (n.parentElement && n.parentElement.closest('[contenteditable="true"]')) return;
+      if (n.getAttribute("contenteditable") === "true") return;
+      if (!isLeafTextEl(n) || !n.textContent.trim()) return;
+      setupTextLeaf(n);
+    });
+  }
+
   function setupBoxBar() {
     var pc = getPageContent();
     if (!pc) return;
@@ -1833,7 +1951,7 @@
         return n;
       }
       var leaf = el.closest('[contenteditable="true"]');
-      if (!leaf || leaf.parentElement === pc || leaf.closest(".site-header, .hero")) return null;
+      if (!leaf || leaf.parentElement === pc || leaf.closest(".site-header, .hero, .space-block")) return null;
       return leaf;
     }
     function hrNear(x, y) {
@@ -1867,14 +1985,20 @@
       outline.style.width = (r.width + 8) + "px";
       outline.style.height = (r.height + (isHr ? 12 : 8)) + "px";
       var bw = bar.offsetWidth, bh = bar.offsetHeight;
-      var left = r.right + 8;
-      var top = isHr ? r.top + r.height / 2 - bh / 2 : r.top;
-      if (left + bw > document.documentElement.clientWidth - 4) {
-        left = r.right - bw;
-        top = isHr ? r.top - bh - 4 : r.top - bh - 4;
+      var left, top;
+      if (isHr) {
+        left = r.right + 8;
+        top = r.top + r.height / 2 - bh / 2;
+        if (left + bw > document.documentElement.clientWidth - 4) { left = r.right - bw; top = r.top - bh - 4; }
+      } else {
+        // inside the dashed outline, bottom-right corner: reachable without
+        // the cursor ever leaving the box
+        left = r.right + 2 - bw;
+        top = r.bottom + 2 - bh;
       }
       bar.style.left = (left + scrollX) + "px";
       bar.style.top = (top + scrollY) + "px";
+      repositionTextToolbar();
     }
 
     function render() {
@@ -1892,15 +2016,223 @@
       } else {
         var box = target;
         var has = lineBelow(box);
+        var grip = document.createElement("button");
+        grip.type = "button";
+        grip.className = "editor-box-btn editor-box-grip";
+        grip.title = "Drag to move this text up or down the page";
+        grip.textContent = "✥ Move";
+        grip.addEventListener("mousedown", function (e) { startTextMove(e, box); });
+        bar.appendChild(grip);
         bar.appendChild(btn(has ? "Remove line below" : "Add line below",
           has ? "Remove the line under this box" : "Add a thin grey line under this box", "",
           function () { toggleLine(box); render(); place(); }));
+        bar.appendChild(btn("Duplicate", "Make a copy of this text right below it", "", function () {
+          var copy = box.cloneNode(true);
+          resetTextEl(copy);
+          box.parentNode.insertBefore(copy, box.nextSibling);
+          setupTextAfterMove(copy);
+          markDirty();
+          show(copy);
+          if (window.__editorOnNotice) window.__editorOnNotice("Text duplicated", true);
+        }));
         bar.appendChild(btn("Delete", box.classList.contains("cv-entry") ? "Delete this entry" : "Delete this text box", "danger", function () {
           hide(); box.remove(); markDirty();
           if (window.__editorOnNotice) window.__editorOnNotice("Text box deleted", true);
         }));
       }
     }
+
+    // ---- drag a text box up/down the page (blue line shows where it lands)
+    function allBoxes() {
+      var list = [];
+      pc.querySelectorAll(".cv-entry").forEach(function (el) { list.push(el); });
+      pc.querySelectorAll(".editor-text-flow").forEach(function (flow) {
+        Array.prototype.forEach.call(flow.children, function (c) { if (boxFor(c) === c) list.push(c); });
+      });
+      pc.querySelectorAll('[contenteditable="true"]').forEach(function (el) { if (boxFor(el) === el) list.push(el); });
+      return list;
+    }
+    function textDropTarget(x, y, items) {
+      var cands = [];
+      var hasSection = items.some(function (it) { return it.parentElement === pc; });
+      function related(el) {
+        return items.some(function (it) { return el === it || it.contains(el) || el.contains(it); });
+      }
+      if (!hasSection) allBoxes().forEach(function (el) {
+        if (related(el)) return;
+        cands.push({ el: el, box: true });
+      });
+      topBlocks().forEach(function (el) {
+        if (items.indexOf(el) !== -1) return;
+        if (items.length === 1 && el.contains(items[0]) && soleContent(el, items[0])) return;
+        cands.push({ el: el, box: false });
+      });
+      var best = null, bestD = Infinity;
+      cands.forEach(function (c) {
+        var r = c.el.getBoundingClientRect();
+        if (!r.height) return;
+        var d = y >= r.top && y <= r.bottom ? 0 : Math.min(Math.abs(y - r.top), Math.abs(y - r.bottom));
+        // on a tie prefer a text box over a whole section, and the innermost box
+        if (d < bestD || (d === bestD && best && c.box && (!best.box || best.el.contains(c.el)))) { bestD = d; best = c; }
+      });
+      if (!best) return null;
+      var br = best.el.getBoundingClientRect();
+      return { el: best.el, box: best.box, where: y < br.top + br.height / 2 ? "before" : "after", rect: br };
+    }
+    function topLevelOf(el) {
+      while (el && el.parentElement !== pc) el = el.parentElement;
+      return el;
+    }
+    // is `el` the only real content of `block`?
+    function soleContent(block, el) {
+      var c = block.cloneNode(true);
+      c.querySelectorAll(".editor-ui").forEach(function (u) { u.remove(); });
+      return c.textContent.trim() === el.textContent.trim();
+    }
+    function removeIfEmpty(block) {
+      if (!block || !block.isConnected || block.parentElement !== pc) return;
+      var c = block.cloneNode(true);
+      c.querySelectorAll(".editor-ui").forEach(function (u) { u.remove(); });
+      if (!c.textContent.trim() && !c.querySelector("img, video, iframe, hr, form")) block.remove();
+    }
+
+    function startTextMove(e, box) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var items = group.length > 1 && group.indexOf(box) !== -1 ? sortedGroup() : [box];
+      var startY = e.clientY, moving = false, drop = null;
+      function onMove(ev) {
+        if (!moving && Math.abs(ev.clientY - startY) < 4) return;
+        if (!moving) {
+          moving = true;
+          hide();
+          items.forEach(function (it) { it.classList.add("editor-text-dragging"); });
+          document.body.classList.add("editor-text-moving");
+        }
+        drop = textDropTarget(ev.clientX, ev.clientY, items);
+        if (!drop) { dropLine.style.display = "none"; return; }
+        var r = drop.rect;
+        dropLine.style.display = "block";
+        dropLine.style.left = r.left + "px";
+        dropLine.style.width = r.width + "px";
+        dropLine.style.top = (drop.where === "before" ? r.top - 3 : r.bottom + 1) + "px";
+        if (ev.clientY < 60) window.scrollBy(0, -14);
+        else if (ev.clientY > window.innerHeight - 60) window.scrollBy(0, 14);
+      }
+      function onUp() {
+        document.removeEventListener("mousemove", onMove, true);
+        document.removeEventListener("mouseup", onUp, true);
+        dropLine.style.display = "none";
+        items.forEach(function (it) { it.classList.remove("editor-text-dragging"); tidyClass(it); });
+        document.body.classList.remove("editor-text-moving");
+        if (!moving || !drop) return;
+        var sections = items.filter(function (it) { return it.parentElement === pc; });
+        var oldTops = items.map(topLevelOf);
+        var parent = drop.box ? drop.el.parentNode : pc;
+        // a fixed marker keeps the drop spot stable while items move around it
+        var marker = document.createElement("span");
+        parent.insertBefore(marker, drop.where === "before" ? drop.el : drop.el.nextSibling);
+        var sec = null;
+        items.forEach(function (n) {
+          if (sections.indexOf(n) !== -1) { pc.insertBefore(n, marker); sec = null; return; }
+          resetTextEl(n);
+          if (drop.box) { parent.insertBefore(n, marker); return; }
+          // between sections: text gets a section of its own
+          if (!sec) {
+            sec = document.createElement("div");
+            sec.className = n.classList.contains("cv-entry") ? "cv-section container" : "project-body container";
+            pc.insertBefore(sec, marker);
+            addBlockHandle(sec);
+          }
+          sec.appendChild(n);
+        });
+        marker.remove();
+        items.forEach(function (n) { if (sections.indexOf(n) === -1) setupTextAfterMove(n); });
+        var newTops = items.map(topLevelOf);
+        oldTops.forEach(function (t) { if (newTops.indexOf(t) === -1) removeIfEmpty(t); });
+        markDirty();
+        renderGroup();
+        if (items.length === 1) show(items[0]);
+      }
+      document.addEventListener("mousemove", onMove, true);
+      document.addEventListener("mouseup", onUp, true);
+    }
+
+    // ---- shift-click to pick several blocks and move them together
+    var group = [];
+    var pill = document.createElement("div");
+    pill.className = "editor-group-pill editor-ui";
+    pill.hidden = true;
+    document.body.appendChild(pill);
+
+    function sortedGroup() {
+      return group.slice().sort(function (a, b) {
+        return a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+      });
+    }
+    function renderGroup() {
+      group = group.filter(function (el) { return el.isConnected; });
+      pc.querySelectorAll(".editor-group-selected").forEach(function (el) {
+        if (group.indexOf(el) === -1) { el.classList.remove("editor-group-selected"); tidyClass(el); }
+      });
+      group.forEach(function (el) { el.classList.add("editor-group-selected"); });
+      pill.innerHTML = "";
+      if (!group.length) { pill.hidden = true; return; }
+      pill.hidden = false;
+      var label = document.createElement("span");
+      label.textContent = group.length + " selected · shift-click to add or remove";
+      var grip = document.createElement("button");
+      grip.type = "button";
+      grip.className = "editor-box-btn editor-box-grip";
+      grip.textContent = "✥ Drag to move together";
+      grip.title = "Drag up or down the page; a blue line shows where they'll go";
+      grip.addEventListener("mousedown", function (e) { startTextMove(e, sortedGroup()[0]); });
+      var clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "editor-box-btn";
+      clear.textContent = "Clear";
+      clear.addEventListener("mousedown", function (e) { e.preventDefault(); e.stopPropagation(); });
+      clear.addEventListener("click", function (e) { e.preventDefault(); clearGroup(); });
+      pill.appendChild(label);
+      pill.appendChild(grip);
+      pill.appendChild(clear);
+    }
+    function clearGroup() { group = []; renderGroup(); }
+    function toggleInGroup(el) {
+      var i = group.indexOf(el);
+      if (i !== -1) { group.splice(i, 1); return; }
+      // picking a section replaces any boxes inside it; a box inside a picked section is ignored
+      if (group.some(function (g) { return g.contains(el); })) return;
+      group = group.filter(function (g) { return !el.contains(g); });
+      group.push(el);
+    }
+    function itemAt(t) {
+      if (!t || !t.closest || !pc.contains(t) || t.closest(".editor-ui")) return null;
+      var item = boxFor(t) || topLevelOf(t);
+      if (!item || item === pc || item.classList.contains("free-canvas")) return null;
+      return item;
+    }
+    window.addEventListener("mousedown", function (e) {
+      if (e.button !== 0) return;
+      if (!e.shiftKey) {
+        if (group.length && !(e.target.closest && e.target.closest(".editor-group-pill, .editor-box-bar"))) clearGroup();
+        return;
+      }
+      var item = itemAt(e.target);
+      if (!item) return;
+      // shift-click inside the text you're typing in still extends the text selection
+      var sel = document.getSelection();
+      var an = sel && sel.rangeCount ? sel.anchorNode : null;
+      var caretBox = an ? boxFor(an.nodeType === 1 ? an : an.parentElement) : null;
+      if (!group.length && caretBox === item) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!group.length && caretBox) toggleInGroup(caretBox);
+      toggleInGroup(item);
+      renderGroup();
+    }, true);
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && group.length) clearGroup(); });
 
     function show(t) {
       clearTimeout(hideTimer);
@@ -2129,6 +2461,7 @@
     addImage: insertMediaBlock,
     addSlideshow: insertSlideshowBlock,
     addLine: insertLineBlock,
+    addSpace: function () { insertSpaceBlock(null); },
     addMailingList: insertMailingListBlock,
   };
 
@@ -2155,6 +2488,7 @@
   });
   setupContentFlow();
   setupBoxBar();
+  document.querySelectorAll(".page-content .space-block").forEach(setupSpaceBlock);
   document.querySelectorAll(".free-mailing-list").forEach(function (wrap) {
     setupExistingMailingListBlock(wrap);
   });
@@ -2232,6 +2566,10 @@
       el.removeAttribute("data-editor-undrag");
     });
 
+    clone.querySelectorAll(".editor-group-selected, .editor-text-dragging").forEach(function (el) {
+      el.classList.remove("editor-group-selected", "editor-text-dragging");
+      if (!el.className) el.removeAttribute("class");
+    });
     clone.querySelectorAll("[contenteditable]").forEach(function (el) {
       el.removeAttribute("contenteditable");
     });
