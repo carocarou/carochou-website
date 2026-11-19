@@ -1688,7 +1688,9 @@
   window.__editorSetBottomRoom = function (center) {
     roomStyle.textContent = "";
     var footer = document.querySelector(".site-footer");
-    var last = footer && (footer.querySelector(":scope > p:last-child") || footer.lastElementChild || footer);
+    // pages without a footer (Home): give the button its own space under the content
+    var last = footer ? (footer.querySelector(":scope > p:last-child") || footer.lastElementChild || footer)
+                      : document.querySelector(".page-content");
     if (!last) return;
     var docEnd = document.documentElement.scrollHeight;
     var below = docEnd - (last.getBoundingClientRect().bottom + window.scrollY);
