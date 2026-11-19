@@ -707,7 +707,7 @@
     if (heroSec) {
       var fill = heroSec.classList.contains("hero--fill");
       tb.appendChild(tbBtn(fill ? "Show whole" : "Show whole ✓",
-        "Show the entire image, with a blurred copy filling the space around it", function () {
+        "Show the entire image, centered on white", function () {
         heroSec.classList.remove("hero--fill");
         markDirty(); buildToolbar(wrap, opts); if (wrap._refreshHeroHint) wrap._refreshHeroHint();
       }));

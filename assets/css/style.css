@@ -145,34 +145,22 @@ p { margin: 0 0 1em; }
   justify-content: center;
   overflow: hidden;
 }
-/* "Show whole" (default): the photo is sized to fit inside the hero and its
-   edges fade softly into the blurred copy behind it. --hero-ratio (width/height)
+/* "Show whole" (default): the photo is sized to fit inside the hero, on white. --hero-ratio (width/height)
    and the hero's size (--hero-w, --hero-h) are set by main.js. */
 .hero img {
-  --iw: min(var(--hero-w, 100vw), var(--hero-h, 100vh) * var(--hero-ratio, 1));
-  --ih: min(var(--hero-h, 100vh), var(--hero-w, 100vw) / var(--hero-ratio, 1));
-  /* fade only on sides that have room around them, up to 14% of the photo */
-  --fx: max(0px, min(var(--iw) * 0.14, (var(--hero-w, 100vw) - var(--iw)) / 2));
-  --fy: max(0px, min(var(--ih) * 0.14, (var(--hero-h, 100vh) - var(--ih)) / 2));
+  --iw: round(down, min(var(--hero-w, 100vw), var(--hero-h, 100vh) * var(--hero-ratio, 1)), 1px);
+  --ih: round(down, min(var(--hero-h, 100vh), var(--hero-w, 100vw) / var(--hero-ratio, 1)), 1px);
   position: absolute;
-  left: 50%;
-  top: 50%;
+  /* whole-pixel position, so no faint line shows at the photo's edge */
+  left: round(down, (var(--hero-w, 100vw) - var(--iw)) / 2, 1px);
+  top: round(down, (var(--hero-h, 100vh) - var(--ih)) / 2, 1px);
   width: var(--iw);
   height: var(--ih);
-  transform: translate(-50%, -50%);
   max-width: none;
   margin: 0;
   object-fit: contain;
   object-position: 50% 50%;
   z-index: 0;
-  -webkit-mask-image:
-    linear-gradient(to right, transparent, rgba(0,0,0,.35) calc(var(--fx) * .4), #000 var(--fx), #000 calc(100% - var(--fx)), rgba(0,0,0,.35) calc(100% - var(--fx) * .4), transparent),
-    linear-gradient(to bottom, transparent, rgba(0,0,0,.35) calc(var(--fy) * .4), #000 var(--fy), #000 calc(100% - var(--fy)), rgba(0,0,0,.35) calc(100% - var(--fy) * .4), transparent);
-  -webkit-mask-composite: source-in;
-  mask-image:
-    linear-gradient(to right, transparent, rgba(0,0,0,.35) calc(var(--fx) * .4), #000 var(--fx), #000 calc(100% - var(--fx)), rgba(0,0,0,.35) calc(100% - var(--fx) * .4), transparent),
-    linear-gradient(to bottom, transparent, rgba(0,0,0,.35) calc(var(--fy) * .4), #000 var(--fy), #000 calc(100% - var(--fy)), rgba(0,0,0,.35) calc(100% - var(--fy) * .4), transparent);
-  mask-composite: intersect;
 }
 /* blurred, enlarged copy of the hero photo behind it (added by main.js) */
 .hero-backdrop {
@@ -184,12 +172,12 @@ p { margin: 0 0 1em; }
   filter: blur(36px) saturate(1.1);
   transform: scale(1.2);   /* hide the soft blurred edges */
   pointer-events: none;
+  display: none;   /* turned off: the space around the photo is plain white */
 }
 /* "Fill screen" mode: crop the photo to fill edge to edge instead */
 .hero.hero--fill img {
-  left: 0; top: 0; width: 100%; height: 100%; transform: none;
+  left: 0; top: 0; width: 100%; height: 100%;
   object-fit: cover; object-position: var(--hero-pos, 50% 50%);
-  -webkit-mask-image: none; mask-image: none;
 }
 .hero.hero--fill .hero-backdrop { display: none; }
 .hero-overlay {
