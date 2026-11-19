@@ -135,3 +135,41 @@ function initCarousels() {
   setH();
   window.addEventListener("resize", setH);
 })();
+
+// Home hero: a blurred, enlarged copy of the photo fills the space around it,
+// so the whole photo shows with no white edges on any screen shape
+(function () {
+  var hero = document.querySelector(".hero");
+  if (!hero) return;
+  var back = document.createElement("div");
+  back.className = "hero-backdrop";
+  back.setAttribute("aria-hidden", "true");
+  hero.insertBefore(back, hero.firstChild);
+  var last = null;
+  function setRatio() {
+    var img = hero.querySelector("img");
+    if (img && img.naturalWidth && img.naturalHeight) {
+      document.documentElement.style.setProperty("--hero-ratio", (img.naturalWidth / img.naturalHeight).toFixed(4));
+    }
+  }
+  hero.addEventListener("load", setRatio, true);
+  function setSize() {
+    var root = document.documentElement.style;
+    root.setProperty("--hero-w", hero.clientWidth + "px");
+    root.setProperty("--hero-h", hero.clientHeight + "px");
+  }
+  setSize();
+  if (window.ResizeObserver) new ResizeObserver(setSize).observe(hero);
+  else window.addEventListener("resize", setSize);
+  function sync() {
+    setRatio();
+    var img = hero.querySelector("img");
+    var src = img ? (img.currentSrc || img.src) : "";
+    if (src === last) return;
+    last = src;
+    back.style.backgroundImage = src ? 'url("' + src.replace(/"/g, '\\"') + '")' : "";
+  }
+  sync();
+  // the site editor can swap the photo
+  new MutationObserver(sync).observe(hero, { subtree: true, childList: true, attributes: true, attributeFilter: ["src"] });
+})();

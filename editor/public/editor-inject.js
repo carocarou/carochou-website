@@ -703,6 +703,20 @@
         buildToolbar(wrap, opts);
       }));
     }
+    var heroSec = media.closest(".hero");
+    if (heroSec) {
+      var fill = heroSec.classList.contains("hero--fill");
+      tb.appendChild(tbBtn(fill ? "Show whole" : "Show whole ✓",
+        "Show the entire image, with a blurred copy filling the space around it", function () {
+        heroSec.classList.remove("hero--fill");
+        markDirty(); buildToolbar(wrap, opts); if (wrap._refreshHeroHint) wrap._refreshHeroHint();
+      }));
+      tb.appendChild(tbBtn(fill ? "Fill screen ✓" : "Fill screen",
+        "Crop the image to fill the screen edge to edge (then drag it to choose which part shows)", function () {
+        heroSec.classList.add("hero--fill");
+        markDirty(); buildToolbar(wrap, opts); if (wrap._refreshHeroHint) wrap._refreshHeroHint();
+      }));
+    }
     if (vid) {
       tb.appendChild(tbBtn(media.paused ? "▶ Play" : "❚❚ Pause", "Preview the video", function (b) {
         if (media.paused) media.play(); else media.pause();
@@ -1088,19 +1102,31 @@
   }
 
 
-  // Home hero photo fills the screen (cropped to fit). Drag it to choose which
-  // part shows; double-click to re-center. Saved as object-position on the photo.
+  // Home hero photo: "Show whole" (default; a blurred copy fills the edges) or
+  // "Fill screen" (cropped to fill). In Fill screen, drag the photo to choose
+  // which part shows; double-click re-centers. Saved as --hero-pos on the photo.
   function setupHeroPan(wrap, img) {
-    wrap.classList.add("editor-hero-pan");
-    wrap.title = "Drag to choose which part of the image shows · double-click to center";
-    function pos() {
-      var p = (img.style.objectPosition || getComputedStyle(img).objectPosition || "50% 50%").split(" ");
-      return [parseFloat(p[0]) || 50, parseFloat(p[1] === undefined ? p[0] : p[1]) || 50];
+    var hero = wrap.closest(".hero");
+    function filling() { return hero && hero.classList.contains("hero--fill"); }
+    function refreshHint() {
+      wrap.classList.toggle("editor-hero-pan", filling());
+      wrap.title = filling() ? "Drag to choose which part of the image shows · double-click to center" : "";
     }
-    function setPos(x, y) {
-      img.style.objectPosition = Math.round(x * 10) / 10 + "% " + Math.round(y * 10) / 10 + "%";
+    // an earlier version saved the drag position as object-position: keep it as
+    // the Fill screen position so the whole-image view stays centered
+    if (img.style.objectPosition) {
+      if (!img.style.getPropertyValue("--hero-pos")) img.style.setProperty("--hero-pos", img.style.objectPosition);
+      img.style.removeProperty("object-position");
+    }
+    refreshHint();
+    wrap._refreshHeroHint = refreshHint;
+    function pos() {
+      var v = img.style.getPropertyValue("--hero-pos").trim() || "50% 50%";
+      var p = v.split(/\s+/);
+      return [parseFloat(p[0]) || 0, parseFloat(p[1] === undefined ? p[0] : p[1]) || 0];
     }
     wrap.addEventListener("mousedown", function (e) {
+      if (!filling()) return;
       if (e.button !== 0 || e.shiftKey || e.target.closest(".editor-ui")) return;
       if (!img.naturalWidth) return;
       e.preventDefault();
@@ -1115,7 +1141,9 @@
         document.body.classList.add("editor-hero-panning");
         var x = overX > 0.5 ? start[0] - dx / overX * 100 : start[0];
         var y = overY > 0.5 ? start[1] - dy / overY * 100 : start[1];
-        setPos(Math.max(0, Math.min(100, x)), Math.max(0, Math.min(100, y)));
+        x = Math.round(Math.max(0, Math.min(100, x)) * 10) / 10;
+        y = Math.round(Math.max(0, Math.min(100, y)) * 10) / 10;
+        img.style.setProperty("--hero-pos", x + "% " + y + "%");
       }
       function mu() {
         window.removeEventListener("mousemove", mm, true);
@@ -1127,8 +1155,8 @@
       window.addEventListener("mouseup", mu, true);
     });
     wrap.addEventListener("dblclick", function (e) {
-      if (e.target.closest(".editor-ui")) return;
-      img.style.objectPosition = "";
+      if (!filling() || e.target.closest(".editor-ui")) return;
+      img.style.removeProperty("--hero-pos");
       if (!img.getAttribute("style")) img.removeAttribute("style");
       markDirty();
     });
@@ -2849,7 +2877,10 @@
     clone.querySelectorAll("link[disabled]").forEach(function (el) { el.removeAttribute("disabled"); });
 
     // main.js adds a photo lightbox at runtime; it must not be saved into the page
-    clone.querySelectorAll(".lightbox-overlay").forEach(function (el) { el.remove(); });
+    clone.querySelectorAll(".lightbox-overlay, .hero-backdrop").forEach(function (el) { el.remove(); });
+    // main.js sets these on <html> at runtime; they must not be saved
+    ["--header-h", "--hero-ratio", "--hero-w", "--hero-h"].forEach(function (k) { clone.style.removeProperty(k); });
+    if (!clone.getAttribute("style")) clone.removeAttribute("style");
 
     // strip main.js runtime carousel artifacts so they don't accumulate across saves
     clone.querySelectorAll(".carousel-nav, .carousel-count").forEach(function (el) { el.remove(); });
